@@ -51,7 +51,7 @@ export function parseOllamaCloudUsage(payload: unknown): ProviderUsage | null {
     if (!window) continue;
     const percent = readFraction(window.usage);
     if (percent === null) continue;
-    lanes.push({ label, percent, resetsAt: typeof window.resetsAt === "string" ? window.resetsAt : undefined });
+    lanes.push({ label, percent: Number(percent.toFixed(2)), resetsAt: typeof window.resetsAt === "string" ? window.resetsAt : undefined });
   }
 
   let notice: string | undefined;
