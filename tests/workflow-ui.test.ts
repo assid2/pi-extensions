@@ -1663,3 +1663,71 @@ test("component saved detail exposes confirmation before delete", async () => {
   component.handleInput("x");
   assert.equal(deleted, 1);
 });
+
+// ─── per-agent + aggregate tok/s in the navigator ─────────────────────────────
+
+test("navigator shows per-agent tok/s on running agent rows", async () => {
+  const { clearTokenSamples } = await import("../src/task-panel.js");
+  clearTokenSamples("run-1");
+  const manager = fakeManager();
+  const model = new NavigatorModel(manager);
+  const state = new NavigatorState();
+  state.drill(model); // runs -> phases
+  state.cursor = 1; // select the Report phase (agent 3 is running there)
+  state.drill(model); // phases -> agents (Report)
+
+  const agents = (manager.getRun("run-1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } })
+    .snapshot.agents;
+  const running = agents[2];
+  running.tokenUsage = { input: 100, output: 300, cacheRead: 0, cacheWrite: 0, total: 400, cost: 0.01 };
+
+  // First render seeds the sampler at t=1000.
+  renderNavigator(state, model, 80, undefined, 24, undefined, 1000);
+  // Grow output; second render at t=2000 → 300→1300 over 1s = 1000 tok/s.
+  running.tokenUsage = { input: 100, output: 1300, cacheRead: 0, cacheWrite: 0, total: 1400, cost: 0.01 };
+  const lines = renderNavigator(state, model, 80, undefined, 24, undefined, 2000);
+  const text = lines.join("\n");
+  assert.ok(/write report/.test(text), `agent row present:\n${text}`);
+  assert.ok(/1000 tok\/s/.test(text), `running agent row shows its generation rate:\n${text}`);
+  clearTokenSamples("run-1");
+});
+
+test("navigator run list shows the aggregate tok/s for a running run", async () => {
+  const { clearTokenSamples } = await import("../src/task-panel.js");
+  clearTokenSamples("run-1");
+  const manager = fakeManager();
+  const model = new NavigatorModel(manager);
+  const state = new NavigatorState();
+  const snap = (manager.getRun("run-1") as unknown as { snapshot: { tokenUsage: Record<string, unknown> } }).snapshot;
+  snap.tokenUsage = { input: 100, output: 500, total: 1500, cost: 0, cacheRead: 900, cacheWrite: 0 };
+  renderNavigator(state, model, 80, undefined, 24, undefined, 1000);
+  snap.tokenUsage = { input: 100, output: 1500, total: 2500, cost: 0, cacheRead: 900, cacheWrite: 0 };
+  const lines = renderNavigator(state, model, 80, undefined, 24, undefined, 2000);
+  const text = lines.join("\n");
+  assert.ok(/1000 tok\/s/.test(text), `run list shows the aggregate generation rate:\n${text}`);
+  clearTokenSamples("run-1");
+});
+
+test("navigator suppresses tok/s for finished runs and non-running agents", async () => {
+  const { clearTokenSamples } = await import("../src/task-panel.js");
+  clearTokenSamples("run-1");
+  const base = fakeManager();
+  // A genuinely finished run (status done in both listRuns and getRun) must
+  // never show a rate, even after the sampler would otherwise have grown.
+  const doneManager = {
+    listRuns: () => base.listRuns().map((r) => ({ ...r, status: "done" })),
+    getRun: (id: string) => {
+      const live = base.getRun(id);
+      return live ? { ...live, status: "done" } : undefined;
+    },
+  };
+  const model = new NavigatorModel(doneManager);
+  const state = new NavigatorState();
+  const snap = (base.getRun("run-1") as unknown as { snapshot: { tokenUsage: Record<string, unknown> } }).snapshot;
+  snap.tokenUsage = { input: 100, output: 500, total: 1500, cost: 0, cacheRead: 900, cacheWrite: 0 };
+  renderNavigator(state, model, 80, undefined, 24, undefined, 1000);
+  snap.tokenUsage = { input: 100, output: 1500, total: 2500, cost: 0, cacheRead: 900, cacheWrite: 0 };
+  const lines = renderNavigator(state, model, 80, undefined, 24, undefined, 2000);
+  assert.ok(!lines.some((l) => /tok\/s/.test(l)), `finished run must not show a rate:\n${lines.join("\n")}`);
+  clearTokenSamples("run-1");
+});

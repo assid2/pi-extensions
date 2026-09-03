@@ -28,6 +28,7 @@ import type { ThemeLike, WorkflowAgentSnapshot, WorkflowSnapshot } from "./displ
 import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow, savedWorkflowCommandAvailability } from "./saved-commands.js";
+import { agentTokensPerSecond, sampleAgentTokens, sampleTokens, tokensPerSecond } from "./token-rate.js";
 import type { WorkflowManager } from "./workflow-manager.js";
 import {
   isSafeSavedWorkflowName,
@@ -345,6 +346,11 @@ export class NavigatorModel {
     // Coerce (#110): a corrupt persisted run can carry a non-string status, which
     // would otherwise crash twoPaneHeader's truncateToWidth() with text.slice().
     return asText(this.snapshot(runId)?.status ?? "unknown");
+  }
+
+  /** Cumulative generated (output) tokens for a run, from its live snapshot. */
+  runOutput(runId: string): number {
+    return this.snapshot(runId)?.snapshot.tokenUsage?.output ?? 0;
   }
 
   phases(runId: string): PhaseRow[] {
@@ -1049,15 +1055,18 @@ function rightAgentRow(
   modelColStart: number,
   innerW: number,
   theme: ThemeLike,
+  runId: string,
 ): string {
   const dotColor = AGENT_DOT_COLOR[a.status] ?? "dim";
   const stats = fmtTokenSegment(tokenFigures(a.tokenUsage, a.tokens), compactTokens);
+  const rate = a.status === "running" ? agentTokensPerSecond(runId, a.id) : 0;
+  const statsFull = rate > 0 ? `${stats} · ${Math.round(rate)} tok/s` : stats;
   const model = shortModel(a.model) ?? "";
 
   // Stable 2-cell marker so columns never shift on selection: "› " | "  ".
   // Layout: <marker:2><dot><sp><name> … <model> … <stats(right-aligned)>.
   const markerW = 2;
-  const statsW = visibleWidth(stats);
+  const statsW = visibleWidth(statsFull);
   const nameStart = markerW + 2; // marker + dot + space
   let modelStart = Math.max(nameStart + visibleWidth(a.label) + GAP_NM, markerW + modelColStart);
   const statsStart = innerW - statsW;
@@ -1083,7 +1092,7 @@ function rightAgentRow(
   const dot = theme.fg(dotColor, DOT);
   const nameStyled = selected ? theme.fg("accent", theme.bold(nameOut)) : theme.fg("accent", nameOut);
   const modelStyled = modelOut ? theme.fg("dim", modelOut) : "";
-  const statsStyled = theme.fg("dim", stats);
+  const statsStyled = theme.fg("dim", statsFull);
 
   // Assemble with explicit cell padding (visibleWidth-driven gaps).
   let out = `${marker + dot} ${nameStyled}`;
@@ -1170,12 +1179,23 @@ function renderPhasesAgents(
   width: number,
   theme: ThemeLike,
   bodyCap: number,
+  now: number,
 ): string[] {
   const phases = model.phases(runId);
   // Group agents by phase ONCE per frame (O(agents)). leftPhaseRow needs each
   // visible phase's agents (status colour) and the selected phase's agents drive
   // the right pane; calling model.agents() per phase row was O(phases × agents).
   const agentsByPhase = model.agentsByPhase(runId);
+  // Feed the shared sampler for every running agent so any phase the user
+  // navigates to has a warm rate; the navigator's 2s tick keeps it decaying on
+  // stalls (a stalled agent stops being fed and its window ages out).
+  for (const [, phaseAgents] of agentsByPhase) {
+    for (const a of phaseAgents) {
+      if (a.status === "running") {
+        sampleAgentTokens(runId, a.id, a.tokenUsage?.output ?? 0, now);
+      }
+    }
+  }
   const agentsOf = (title: string): AgentRow[] => agentsByPhase.get(title) ?? [];
   // Which phase is selected drives the right pane. In "phases" view it's the
   // cursor; in "agents" view it's the drilled-in phase (state.phase).
@@ -1187,7 +1207,7 @@ function renderPhasesAgents(
 
   // Narrow-terminal degrade: single pane (spec §7.1).
   if (width < LW_MIN + RW_MIN - 1) {
-    return renderSinglePane(state, phases, selPhaseIdx, agents, width, theme, bodyCap, inAgents);
+    return renderSinglePane(state, phases, selPhaseIdx, agents, width, theme, bodyCap, inAgents, runId);
   }
 
   const leftW = computeLeftWidth(phases, width);
@@ -1232,7 +1252,7 @@ function renderPhasesAgents(
         continue;
       }
       const selected = inAgents && idx === state.cursor;
-      let row = rightAgentRow(agents[idx], selected, modelColStart, rightInner, theme);
+      let row = rightAgentRow(agents[idx], selected, modelColStart, rightInner, theme, runId);
       if (k === bodyRows - 1 && rightRows.more) {
         row = truncateToWidth(theme.fg("dim", `  ${ELLIPSIS}`), rightInner, "", true);
       }
@@ -1287,6 +1307,7 @@ function renderSinglePane(
   theme: ThemeLike,
   bodyCap: number,
   inAgents: boolean,
+  runId: string,
 ): string[] {
   const innerW = Math.max(1, width - 2);
   const bc = (s: string) => theme.fg("muted", s);
@@ -1305,7 +1326,7 @@ function renderSinglePane(
         out.push(bc(BX.v) + " ".repeat(innerW) + bc(BX.v));
         continue;
       }
-      let row = rightAgentRow(agents[idx], idx === state.cursor, modelColStart, innerW, theme);
+      let row = rightAgentRow(agents[idx], idx === state.cursor, modelColStart, innerW, theme, runId);
       if (k === rows - 1 && win.more) row = truncateToWidth(theme.fg("dim", `  ${ELLIPSIS}`), innerW, "", true);
       out.push(bc(BX.v) + row + bc(BX.v));
     }
@@ -1337,9 +1358,10 @@ export function renderNavigator(
   theme: ThemeLike = PLAIN,
   viewportRows = 24,
   markdownTheme?: MarkdownTheme,
+  now = Date.now(),
 ): string[] {
   return model.withRenderFrame(() =>
-    renderNavigatorFrame(state, model, width, theme, viewportRows, markdownTheme, undefined),
+    renderNavigatorFrame(state, model, width, theme, viewportRows, markdownTheme, undefined, now),
   );
 }
 
@@ -1351,6 +1373,7 @@ function renderNavigatorFrame(
   viewportRows: number,
   markdownTheme: MarkdownTheme | undefined,
   renderCache: NavigatorTextRenderCache | undefined,
+  now = Date.now(),
 ): string[] {
   const lines: string[] = [];
   let visibleSnapshot: NavigatorSnapshot | undefined;
@@ -1430,9 +1453,18 @@ function renderNavigatorFrame(
         lines.push(dim("  ── saved ──"));
       if (item.kind === "run") {
         const row = item.row;
+        if (row.status === "running") {
+          sampleTokens(row.runId, model.runOutput(row.runId), now);
+        }
         const icon = STATUS_ICON[row.status] ?? "?";
         const tok = fmtTokenSegment(row, pad);
-        const meta = [`${row.done}/${row.total}`, tok, row.cost > 0 ? fmtCost(row.cost) : ""]
+        const rate = row.status === "running" ? tokensPerSecond(row.runId) : 0;
+        const meta = [
+          `${row.done}/${row.total}`,
+          tok,
+          rate > 0 ? `${Math.round(rate)} tok/s` : "",
+          row.cost > 0 ? fmtCost(row.cost) : "",
+        ]
           .filter(Boolean)
           .join(" · ");
         lines.push(sel(i, `${icon} ${row.name}  ${dim(`${row.runId} · ${row.status} · ${meta}`)}`));
@@ -1450,14 +1482,14 @@ function renderNavigatorFrame(
     lines.push(...twoPaneHeader(model, state.runId, phases, width, theme));
     // Body cap: total height minus 2 header + 2 frame rules + blank + footer.
     const bodyCap = Math.max(1, viewportRows - 2 /*header*/ - 2 /*rules*/ - 2 /*blank+footer*/);
-    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap));
+    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap, now));
   } else if (state.kind === "agents" && state.runId && state.phase) {
     const agents = model.agents(state.runId, state.phase);
     state.clamp(agents.length);
     const phases = model.phases(state.runId);
     lines.push(...twoPaneHeader(model, state.runId, phases, width, theme));
     const bodyCap = Math.max(1, viewportRows - 2 - 2 - 2);
-    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap));
+    lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap, now));
   } else if (state.kind === "detail" && state.runId && state.agentId != null) {
     const a = model.agentDetail(state.runId, state.agentId);
     lines.push(theme.bold(a ? asText(a.label) : "agent"));
@@ -1942,6 +1974,14 @@ export function openWorkflowNavigator(
   return ui.custom<void>(
     (tui: TUI, theme: Theme, _keybindings, done: (r: undefined) => void) => {
       const rerender = () => tui.requestRender();
+      // Live rates need a periodic redraw while a run is active (mirrors the live
+      // panel's detailed-mode tick): events alone go silent on a stall, so the
+      // sampler's window would otherwise freeze instead of decaying to 0.
+      const hasActiveRun = () => manager.listRuns().some((r) => r.status === "running" || r.status === "paused");
+      const rateTimer = setInterval(() => {
+        if (hasActiveRun()) tui.requestRender();
+      }, 2000);
+      (rateTimer as { unref?: () => void }).unref?.();
       const markdownTheme = getMarkdownTheme();
       const renderCache = new NavigatorTextRenderCache();
       const events = [
@@ -1996,6 +2036,7 @@ export function openWorkflowNavigator(
       manager.on("agentHistory", onAgentHistory);
 
       const cleanup = () => {
+        clearInterval(rateTimer);
         for (const ev of events) manager.off(ev, onEvent);
         manager.off("agentHistory", onAgentHistory);
         if (historyRenderTimer) clearTimeout(historyRenderTimer);
