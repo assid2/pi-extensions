@@ -1001,25 +1001,21 @@ export function renderPanel(manager: WorkflowManager, theme: Theme, width?: numb
 
 /** Rolling window for the token/s rate. Older samples age out so a stall decays to 0. */
 const RATE_WINDOW_MS = 10_000;
-/** Per-run (timestamp, cumulative total) samples, keyed by the persisted runId so
- *  the rolling rate survives pause→resume. Cleared when a run ends. */
-const tokenSamples = new Map<string, Array<{ ts: number; total: number }>>();
+type SampleList = Array<{ ts: number; total: number }>;
 
-/** Record a token-total sample for `runId` at time `now` (ms). */
-export function sampleTokens(runId: string, total: number, now: number): void {
-  const samples = tokenSamples.get(runId) ?? [];
+/** Push a (ts, total) sample into a rolling sample list, collapsing same-instant repeats. */
+function pushSample(samples: SampleList, now: number, total: number): void {
   const last = samples[samples.length - 1];
   // Collapse repeat renders within the same instant (e.g. width recalcs).
   if (last && last.ts === now && last.total === total) return;
   samples.push({ ts: now, total });
   // Drop samples beyond the rolling window, always keeping ≥2 so a rate is computable.
   while (samples.length > 2 && now - samples[0].ts > RATE_WINDOW_MS) samples.shift();
-  tokenSamples.set(runId, samples);
 }
 
-/** Tokens/second over the rolling window; 0 when too few samples or totals plateau. */
-export function tokensPerSecond(runId: string): number {
-  const samples = tokenSamples.get(runId);
+/** Tokens/second over the oldest→newest span of a sample list; 0 when there are too
+ *  few samples or the total plateaued (the stall signal). */
+function rateOver(samples: SampleList | undefined): number {
   if (!samples || samples.length < 2) return 0;
   const oldest = samples[0];
   const newest = samples[samples.length - 1];
@@ -1030,9 +1026,48 @@ export function tokensPerSecond(runId: string): number {
   return (delta / elapsedMs) * 1000;
 }
 
-/** Forget a run's samples (call when it finishes) so the map can't grow unbounded. */
+/** Per-run (timestamp, cumulative total) samples, keyed by the persisted runId so
+ *  the rolling rate survives pause→resume. Cleared when a run ends. */
+const tokenSamples = new Map<string, SampleList>();
+
+/** Per-agent (timestamp, cumulative total) samples, keyed by `${runId}/${agentId}` so
+ *  each task row can show its own rolling tok/s. Only running agents are sampled: a
+ *  finished agent's total plateaus, its window ages out, and its rate decays to 0.
+ *  The run-end sweep in {@link clearTokenSamples} removes them all. */
+const agentTokenSamples = new Map<string, SampleList>();
+
+/** Record a token-total sample for `runId` at time `now` (ms). */
+export function sampleTokens(runId: string, total: number, now: number): void {
+  const samples = tokenSamples.get(runId) ?? [];
+  pushSample(samples, now, total);
+  tokenSamples.set(runId, samples);
+}
+
+/** Record a per-agent token-total sample for agent `agentId` of `runId` at time `now` (ms). */
+export function sampleAgentTokens(runId: string, agentId: number, total: number, now: number): void {
+  const key = `${runId}/${agentId}`;
+  const samples = agentTokenSamples.get(key) ?? [];
+  pushSample(samples, now, total);
+  agentTokenSamples.set(key, samples);
+}
+
+/** Tokens/second over the rolling window; 0 when too few samples or totals plateau. */
+export function tokensPerSecond(runId: string): number {
+  return rateOver(tokenSamples.get(runId));
+}
+
+/** Per-agent tokens/second over the rolling window; 0 for unknown or stalled agents. */
+export function agentTokensPerSecond(runId: string, agentId: number): number {
+  return rateOver(agentTokenSamples.get(`${runId}/${agentId}`));
+}
+
+/** Forget a run's samples (call when it finishes) so the maps can't grow unbounded. */
 export function clearTokenSamples(runId: string): void {
   tokenSamples.delete(runId);
+  const prefix = `${runId}/`;
+  for (const key of agentTokenSamples.keys()) {
+    if (key.startsWith(prefix)) agentTokenSamples.delete(key);
+  }
 }
 
 /** Compact token count for the space-constrained panel: 980, 12.4K, 1.3M. */
@@ -1055,6 +1090,7 @@ function renderRunBody(
   agents: WorkflowAgentSnapshot[],
   maxAgents: number,
   theme: Theme,
+  runId: string,
 ): string[] {
   const dim = (t: string) => theme.fg("dim", t);
   const lines: string[] = [];
@@ -1090,9 +1126,11 @@ function renderRunBody(
     for (const a of visible) {
       const segment = fmtTokenSegment(tokenFigures(a.tokenUsage, a.tokens), fmtTokensShort);
       const tok = segment ? dim(` ${segment}`) : "";
+      const rate = a.status === "running" ? agentTokensPerSecond(runId, a.id) : 0;
+      const tps = rate > 0 ? dim(` · ${Math.round(rate)} tok/s`) : "";
       const mdl = shortModel(a.model);
       const model = mdl ? dim(` · ${mdl}`) : "";
-      lines.push(`    [${a.id}] ${statusIcon(a.status)} ${shorten(a.label, 40)}${tok}${model}`);
+      lines.push(`    [${a.id}] ${statusIcon(a.status)} ${shorten(a.label, 40)}${tok}${tps}${model}`);
     }
     if (phaseAgents.length > visible.length) {
       lines.push(dim(`    … ${phaseAgents.length - visible.length} earlier agents`));
@@ -1132,6 +1170,14 @@ export function renderPanelDetailed(
     // runs do not accrue tokens, so their rate is suppressed.
     const runUsage = aggregateAgentUsage(agents);
     sampleTokens(r.runId, runUsage.fresh + runUsage.cacheRead, now);
+    if (r.status === "running") {
+      for (const a of agents) {
+        if (a.status === "running") {
+          const f = tokenFigures(a.tokenUsage, a.tokens);
+          sampleAgentTokens(r.runId, a.id, f.fresh + f.cacheRead, now);
+        }
+      }
+    }
     const rate = r.status === "running" ? tokensPerSecond(r.runId) : 0;
     const meta = [
       `${done}/${agents.length} agents`,
@@ -1144,7 +1190,7 @@ export function renderPanelDetailed(
       .filter(Boolean)
       .join(" · ");
     out.push(`  ${icon} ${theme.bold(r.workflowName)}  ${dim(meta)}`);
-    if (snap) out.push(...renderRunBody(snap, agents, maxAgents, theme));
+    if (snap) out.push(...renderRunBody(snap, agents, maxAgents, theme, r.runId));
   }
 
   const finished = all.filter((r) => r.status !== "running" && r.status !== "paused").length;

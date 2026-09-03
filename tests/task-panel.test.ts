@@ -2379,6 +2379,43 @@ describe("token rate", () => {
   });
 });
 
+// ─── per-agent token/s rolling window ─────────────────────────────────────────
+
+describe("per-agent token rate", () => {
+  it("tracks each agent's rolling rate independently and clears on run end", async () => {
+    const { sampleAgentTokens, agentTokensPerSecond, clearTokenSamples } = await import("../src/task-panel.js");
+    clearTokenSamples("ag-run");
+    clearTokenSamples("other-run");
+    assert.equal(agentTokensPerSecond("ag-run", 1), 0);
+    sampleAgentTokens("ag-run", 1, 100, 1000);
+    assert.equal(agentTokensPerSecond("ag-run", 1), 0, "one sample: no rate yet");
+    sampleAgentTokens("ag-run", 1, 2600, 2000);
+    sampleAgentTokens("ag-run", 2, 100, 1000);
+    sampleAgentTokens("ag-run", 2, 400, 2000);
+    sampleAgentTokens("other-run", 1, 0, 1000);
+    sampleAgentTokens("other-run", 1, 5000, 2000);
+    assert.equal(agentTokensPerSecond("ag-run", 1), 2500, "2500 tokens over 1s");
+    assert.equal(agentTokensPerSecond("ag-run", 2), 300, "300 tokens over 1s");
+    assert.equal(agentTokensPerSecond("other-run", 1), 5000, "same agent id in another run stays independent");
+    clearTokenSamples("ag-run");
+    assert.equal(agentTokensPerSecond("ag-run", 1), 0, "run-end sweep clears that run's agent samples");
+    assert.equal(agentTokensPerSecond("ag-run", 2), 0);
+    assert.equal(agentTokensPerSecond("other-run", 1), 5000, "other run untouched by the sweep");
+    clearTokenSamples("other-run");
+  });
+
+  it("decays to 0 when the agent plateaus (stall detection)", async () => {
+    const { sampleAgentTokens, agentTokensPerSecond, clearTokenSamples } = await import("../src/task-panel.js");
+    clearTokenSamples("stall-run");
+    sampleAgentTokens("stall-run", 3, 0, 0);
+    sampleAgentTokens("stall-run", 3, 1000, 1000);
+    assert.equal(agentTokensPerSecond("stall-run", 3), 1000);
+    // A stall: same total sampled > 10s later ages out the growth window → 0 tok/s.
+    sampleAgentTokens("stall-run", 3, 1000, 12000);
+    assert.equal(agentTokensPerSecond("stall-run", 3), 0, "stalled agent shows 0 tok/s");
+  });
+});
+
 // ─── detailed progress panel ─────────────────────────────────────────────────────
 
 describe("renderPanelDetailed", () => {
@@ -2501,6 +2538,52 @@ describe("renderPanelDetailed", () => {
       `run header should show the estimate and the cost, got:\n${lines.join("\n")}`,
     );
     assert.ok(!lines.some((l) => /\b0 tok/.test(l)), `no zero breakdown anywhere:\n${lines.join("\n")}`);
+  });
+
+  it("shows tok/s only on running agent rows once the rolling window has grown", async () => {
+    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
+    clearTokenSamples("r1");
+    const fake = detailedManager(2100);
+    const manager = fake as never;
+    const agents = (fake.getRun("r1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } }).snapshot
+      .agents;
+    const running = agents.find((a) => a.id === 2);
+    assert.ok(running, "fixture has a running agent 2");
+
+    const first = renderPanelDetailed(manager, theme as never, undefined, 8, 1000);
+    assert.ok(
+      !first.some((l) => /tok\/s/.test(l)),
+      `first render has one sample: no rate anywhere:\n${first.join("\n")}`,
+    );
+
+    running.tokens = 3300;
+    const second = renderPanelDetailed(manager, theme as never, undefined, 8, 2000);
+    assert.ok(
+      second.some((l) => l.includes("[2] ● audit_auth") && /1500 tok\/s/.test(l)),
+      `running agent row should show its own rate, got:\n${second.join("\n")}`,
+    );
+    for (const l of second) {
+      if (l.includes("[1]") || l.includes("[3]") || l.includes("[4]")) {
+        assert.ok(!/tok\/s/.test(l), `non-running row must not show a rate:\n${l}`);
+      }
+    }
+    clearTokenSamples("r1");
+  });
+
+  it("suppresses per-agent tok/s while the run is paused", async () => {
+    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
+    clearTokenSamples("r1");
+    const fake = detailedManager(2100, "paused");
+    const manager = fake as never;
+    const agents = (fake.getRun("r1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } }).snapshot
+      .agents;
+    const running = agents.find((a) => a.id === 2);
+    assert.ok(running, "fixture has a running agent 2");
+    renderPanelDetailed(manager, theme as never, undefined, 8, 1000);
+    running.tokens = 3300;
+    const lines = renderPanelDetailed(manager, theme as never, undefined, 8, 2000);
+    assert.ok(!lines.some((l) => /tok\/s/.test(l)), `paused run must not show any rate:\n${lines.join("\n")}`);
+    clearTokenSamples("r1");
   });
 
   it("renders aggregate tokens, cost, phases, and per-agent rows", async () => {
