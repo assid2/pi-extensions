@@ -2420,6 +2420,14 @@ describe("per-agent token rate", () => {
 
 describe("renderPanelDetailed", () => {
   const theme = { fg: (_c: string, t: string) => t, bold: (t: string) => t };
+  type UsageFixture = {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+    total: number;
+    cost: number;
+  };
 
   // `blueTokens` drives the first agent's live token count; the run aggregate and
   // token/s are summed from per-agent tokens (the run-level tokenUsage aggregate is
@@ -2550,17 +2558,31 @@ describe("renderPanelDetailed", () => {
     const running = agents.find((a) => a.id === 2);
     assert.ok(running, "fixture has a running agent 2");
 
+    // Rates are fed from cumulative OUTPUT only (generation), so set a usage
+    // breakdown on the running agent and grow only its output between renders.
+    const usage: UsageFixture = { input: 900, output: 300, cacheRead: 0, cacheWrite: 0, total: 1200, cost: 0.01 };
+    running.tokenUsage = usage;
+
     const first = renderPanelDetailed(manager, theme as never, undefined, 8, 1000);
     assert.ok(
       !first.some((l) => /tok\/s/.test(l)),
       `first render has one sample: no rate anywhere:\n${first.join("\n")}`,
     );
 
-    running.tokens = 3300;
+    usage.output = 1500;
+    usage.total = 2400;
     const second = renderPanelDetailed(manager, theme as never, undefined, 8, 2000);
     assert.ok(
-      second.some((l) => l.includes("[2] ● audit_auth") && /1500 tok\/s/.test(l)),
-      `running agent row should show its own rate, got:\n${second.join("\n")}`,
+      second.some((l) => l.includes("[2] ● audit_auth") && /1200 tok\/s/.test(l)),
+      `running agent row should show its own generation rate, got:\n${second.join("\n")}`,
+    );
+    assert.ok(
+      second.some((l) => l.includes("[2] ● audit_auth") && /2\.4K tok/.test(l)),
+      "token cell still shows the billed breakdown, independent of the rate",
+    );
+    assert.ok(
+      second.some((l) => l.includes("auth_audit") && /1200 tok\/s/.test(l)),
+      `run header shows the aggregate generation rate, got:\n${second.join("\n")}`,
     );
     for (const l of second) {
       if (l.includes("[1]") || l.includes("[3]") || l.includes("[4]")) {
@@ -2579,10 +2601,47 @@ describe("renderPanelDetailed", () => {
       .agents;
     const running = agents.find((a) => a.id === 2);
     assert.ok(running, "fixture has a running agent 2");
+    const usage: UsageFixture = { input: 900, output: 300, cacheRead: 0, cacheWrite: 0, total: 1200, cost: 0.01 };
+    running.tokenUsage = usage;
     renderPanelDetailed(manager, theme as never, undefined, 8, 1000);
-    running.tokens = 3300;
+    usage.output = 1500;
+    usage.total = 2400;
     const lines = renderPanelDetailed(manager, theme as never, undefined, 8, 2000);
     assert.ok(!lines.some((l) => /tok\/s/.test(l)), `paused run must not show any rate:\n${lines.join("\n")}`);
+    clearTokenSamples("r1");
+  });
+
+  it("rates track generation only — prompt and cache jumps do not spike them", async () => {
+    const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
+    clearTokenSamples("r1");
+    const fake = detailedManager(2100);
+    const manager = fake as never;
+    const agents = (fake.getRun("r1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } }).snapshot
+      .agents;
+    const running = agents.find((a) => a.id === 2);
+    assert.ok(running, "fixture has a running agent 2");
+
+    const usage: UsageFixture = { input: 400, output: 100, cacheRead: 40000, cacheWrite: 0, total: 40500, cost: 0.02 };
+    running.tokenUsage = usage;
+    renderPanelDetailed(manager, theme as never, undefined, 8, 1000);
+
+    // A big new prompt lands at a call boundary: billed tokens jump ~199K in
+    // one second while the model only generates 400 more output tokens.
+    running.tokenUsage = {
+      input: 50400,
+      output: 500,
+      cacheRead: 190000,
+      cacheWrite: 0,
+      total: 240900,
+      cost: 0.4,
+    };
+    const second = renderPanelDetailed(manager, theme as never, undefined, 8, 2000);
+    const row = second.find((l) => l.includes("[2]"));
+    assert.ok(row, `agent row present:\n${second.join("\n")}`);
+    const m = row.match(/· (\d+) tok\/s/);
+    assert.ok(m, `rate segment present: ${row}`);
+    assert.equal(m[1], "400", "rate is the 400 generated output tokens, not the ~200K billed-token jump");
+    assert.ok(/190\.0K cached/.test(row), `token cell still shows the big cache re-read: ${row}`);
     clearTokenSamples("r1");
   });
 
@@ -2621,16 +2680,26 @@ describe("renderPanelDetailed", () => {
     );
   });
 
-  it("shows a live token/s after two growing samples", async () => {
+  it("shows a live generation tok/s after two growing output samples", async () => {
     const { renderPanelDetailed, clearTokenSamples } = await import("../src/task-panel.js");
     clearTokenSamples("r1");
-    // aggregate goes 3900 → 5900 over 1s = 2000 tok/s
-    renderPanelDetailed(detailedManager(2100) as never, theme as never, undefined, 8, 1000);
-    const lines = renderPanelDetailed(detailedManager(4100) as never, theme as never, undefined, 8, 2000);
+    const fake = detailedManager(2100);
+    const agents = (fake.getRun("r1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } }).snapshot
+      .agents;
+    const running = agents.find((a) => a.id === 2);
+    assert.ok(running, "fixture has a running agent 2");
+    // Cumulative generated output goes 500 → 1500 over 1s = 1000 tok/s.
+    const usage: UsageFixture = { input: 600, output: 500, cacheRead: 0, cacheWrite: 0, total: 1100, cost: 0.01 };
+    running.tokenUsage = usage;
+    renderPanelDetailed(fake as never, theme as never, undefined, 8, 1000);
+    usage.output = 1500;
+    usage.total = 2100;
+    const lines = renderPanelDetailed(fake as never, theme as never, undefined, 8, 2000);
     assert.ok(
-      lines.some((l) => /2000 tok\/s/.test(l)),
+      lines.some((l) => /1000 tok\/s/.test(l)),
       `expected a tok/s readout, got:\n${lines.join("\n")}`,
     );
+    clearTokenSamples("r1");
   });
 
   it("caps agents per phase and reports the overflow", async () => {

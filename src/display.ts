@@ -107,6 +107,19 @@ export function aggregateAgentUsage(agents: ReadonlyArray<Pick<WorkflowAgentSnap
 }
 
 /**
+ * Sum the generated (output) tokens across a set of agents. This is the signal
+ * that grows while models produce — it is what the token/s rates track. It
+ * deliberately excludes input and cacheRead, which jump in one step at each
+ * API-call boundary (prompt send + cached re-reads); feeding those into a
+ * rate produced implausible spikes (tens of K "tok/s") that read as speed.
+ */
+export function sumAgentOutput(agents: ReadonlyArray<Pick<WorkflowAgentSnapshot, "tokenUsage">>): number {
+  let output = 0;
+  for (const a of agents) output += a.tokenUsage?.output ?? 0;
+  return output;
+}
+
+/**
  * Format a token count for a display surface: "12.4K tok" on its own, or
  * "89K tok · 3.0M cached" when there were cache reads. The cache segment is shown
  * only when `cacheRead > 0`, so a non-caching provider (or a single-turn agent that

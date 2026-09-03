@@ -605,6 +605,16 @@ describe("display pure helpers", () => {
     assert.ok(result.includes("1"), "should contain 1");
   });
 
+  it("sumAgentOutput sums generated output only (no input, no cache)", async () => {
+    const { sumAgentOutput } = await loadDisplay();
+    const agents = [
+      { tokenUsage: { input: 5000, output: 300, cacheRead: 80000, cacheWrite: 0, total: 85300, cost: 0.1 } },
+      { tokenUsage: { input: 100, output: 700, cacheRead: 0, cacheWrite: 0, total: 800, cost: 0.01 } },
+      { tokens: 99999 },
+    ] as never[];
+    assert.equal(sumAgentOutput(agents), 1000, "only output counts; a scalar-only agent contributes 0");
+  });
+
   it("statusLine shows completed state", async () => {
     const { createWorkflowSnapshot, createWidgetWorkflowDisplay } = await loadDisplay();
     // statusLine is internal to display.ts — tested via widget display

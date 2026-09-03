@@ -21,6 +21,7 @@ import {
   fmtTokenSegment,
   shorten,
   statusIcon,
+  sumAgentOutput,
   tokenFigures,
   type WorkflowAgentSnapshot,
   type WorkflowSnapshot,
@@ -1030,10 +1031,10 @@ function rateOver(samples: SampleList | undefined): number {
  *  the rolling rate survives pause→resume. Cleared when a run ends. */
 const tokenSamples = new Map<string, SampleList>();
 
-/** Per-agent (timestamp, cumulative total) samples, keyed by `${runId}/${agentId}` so
- *  each task row can show its own rolling tok/s. Only running agents are sampled: a
- *  finished agent's total plateaus, its window ages out, and its rate decays to 0.
- *  The run-end sweep in {@link clearTokenSamples} removes them all. */
+/** Per-agent (timestamp, cumulative generated-output) samples, keyed by `${runId}/${agentId}`
+ *  so each task row can show its own rolling generation rate. Only running agents are
+ *  sampled: a finished agent's output plateaus, its window ages out, and its rate decays
+ *  to 0. The run-end sweep in {@link clearTokenSamples} removes them all. */
 const agentTokenSamples = new Map<string, SampleList>();
 
 /** Record a token-total sample for `runId` at time `now` (ms). */
@@ -1141,8 +1142,8 @@ function renderRunBody(
 
 /**
  * Detailed variant of {@link renderPanel}: per-run header with aggregate tokens,
- * cost, and a live token/s rate, followed by per-phase progress and per-agent rows
- * (capped at `maxAgents` per phase). `now` is injected for testability.
+ * cost, and a live generation rate (output tokens/s), followed by per-phase progress
+ * and per-agent rows (capped at `maxAgents` per phase). `now` is injected for testability.
  */
 export function renderPanelDetailed(
   manager: WorkflowManager,
@@ -1164,17 +1165,18 @@ export function renderPanelDetailed(
     const done = agents.filter((a) => a.status === "done").length;
     const icon = r.status === "paused" ? "⏸" : "◆";
     const usage = snap?.tokenUsage ?? r.tokenUsage;
-    // Per-agent figures stream while agents run, so aggregate them for the same
-    // fresh+cacheRead sum the header displays. A flat rate now indicates a real
-    // lull rather than merely waiting for a long-running agent to return. Paused
-    // runs do not accrue tokens, so their rate is suppressed.
+    // The displayed token cell stays the billed breakdown (fresh + cacheRead), but
+    // the RATE samples cumulative output only: input and cacheRead jump in one step
+    // at each API-call boundary (prompt send + cached re-reads), which made the old
+    // billed-token rate spike to implausible values. Output grows while a model
+    // generates, so a flat/zero rate now indicates a real stall. Paused runs do not
+    // accrue output, so their rate is suppressed.
     const runUsage = aggregateAgentUsage(agents);
-    sampleTokens(r.runId, runUsage.fresh + runUsage.cacheRead, now);
+    sampleTokens(r.runId, sumAgentOutput(agents), now);
     if (r.status === "running") {
       for (const a of agents) {
         if (a.status === "running") {
-          const f = tokenFigures(a.tokenUsage, a.tokens);
-          sampleAgentTokens(r.runId, a.id, f.fresh + f.cacheRead, now);
+          sampleAgentTokens(r.runId, a.id, a.tokenUsage?.output ?? 0, now);
         }
       }
     }
