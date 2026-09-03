@@ -1692,19 +1692,44 @@ test("navigator shows per-agent tok/s on running agent rows", async () => {
   clearTokenSamples("run-1");
 });
 
-test("navigator run list shows the aggregate tok/s for a running run", async () => {
+test("navigator run list shows the total tok/s for a running run", async () => {
   const { clearTokenSamples } = await import("../src/task-panel.js");
   clearTokenSamples("run-1");
   const manager = fakeManager();
   const model = new NavigatorModel(manager);
   const state = new NavigatorState();
-  const snap = (manager.getRun("run-1") as unknown as { snapshot: { tokenUsage: Record<string, unknown> } }).snapshot;
-  snap.tokenUsage = { input: 100, output: 500, total: 1500, cost: 0, cacheRead: 900, cacheWrite: 0 };
+  const agents = (manager.getRun("run-1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } })
+    .snapshot.agents;
+  const running = agents[2]; // "write report", the only running agent
+  running.tokenUsage = { input: 100, output: 500, cacheRead: 0, cacheWrite: 0, total: 600, cost: 0.01 };
   renderNavigator(state, model, 80, undefined, 24, undefined, 1000);
-  snap.tokenUsage = { input: 100, output: 1500, total: 2500, cost: 0, cacheRead: 900, cacheWrite: 0 };
+  running.tokenUsage = { input: 100, output: 1500, cacheRead: 0, cacheWrite: 0, total: 1600, cost: 0.01 };
   const lines = renderNavigator(state, model, 80, undefined, 24, undefined, 2000);
   const text = lines.join("\n");
-  assert.ok(/1000 tok\/s/.test(text), `run list shows the aggregate generation rate:\n${text}`);
+  assert.ok(/1000 tok\/s/.test(text), `run list shows the total generation rate:\n${text}`);
+  clearTokenSamples("run-1");
+});
+
+test("navigator detail pane header shows the sum of the running agents' tok/s", async () => {
+  const { clearTokenSamples } = await import("../src/task-panel.js");
+  clearTokenSamples("run-1");
+  const manager = fakeManager();
+  const model = new NavigatorModel(manager);
+  const state = new NavigatorState();
+  state.drill(model); // runs -> phases
+  state.cursor = 1; // Report phase
+  state.drill(model); // phases -> agents (Report)
+
+  const agents = (manager.getRun("run-1") as unknown as { snapshot: { agents: Array<Record<string, unknown>> } })
+    .snapshot.agents;
+  const running = agents[2];
+  running.tokenUsage = { input: 100, output: 300, cacheRead: 0, cacheWrite: 0, total: 400, cost: 0.01 };
+  renderNavigator(state, model, 80, undefined, 24, undefined, 1000);
+  running.tokenUsage = { input: 100, output: 1300, cacheRead: 0, cacheWrite: 0, total: 1400, cost: 0.01 };
+  const lines = renderNavigator(state, model, 80, undefined, 24, undefined, 2000);
+  const text = lines.join("\n");
+  // The two-pane header line 1 carries the total: "running  1/3 agents · <tok> · 1000 tok/s"
+  assert.ok(/1000 tok\/s/.test(text), `detail pane header shows the sum of running agents' rates:\n${text}`);
   clearTokenSamples("run-1");
 });
 

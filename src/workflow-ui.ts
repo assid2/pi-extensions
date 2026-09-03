@@ -28,7 +28,7 @@ import type { ThemeLike, WorkflowAgentSnapshot, WorkflowSnapshot } from "./displ
 import { aggregateAgentUsage, fmtCost, fmtTokenSegment, tokenFigures } from "./display.js";
 import type { PersistedRunState } from "./run-persistence.js";
 import { registerSavedWorkflow, savedWorkflowCommandAvailability } from "./saved-commands.js";
-import { agentTokensPerSecond, sampleAgentTokens, sampleTokens, tokensPerSecond } from "./token-rate.js";
+import { agentTokensPerSecond, sampleAgentTokens } from "./token-rate.js";
 import type { WorkflowManager } from "./workflow-manager.js";
 import {
   isSafeSavedWorkflowName,
@@ -346,11 +346,6 @@ export class NavigatorModel {
     // Coerce (#110): a corrupt persisted run can carry a non-string status, which
     // would otherwise crash twoPaneHeader's truncateToWidth() with text.slice().
     return asText(this.snapshot(runId)?.status ?? "unknown");
-  }
-
-  /** Cumulative generated (output) tokens for a run, from its live snapshot. */
-  runOutput(runId: string): number {
-    return this.snapshot(runId)?.snapshot.tokenUsage?.output ?? 0;
   }
 
   phases(runId: string): PhaseRow[] {
@@ -1172,6 +1167,28 @@ function renderTwoPaneFrame(a: TwoPaneArgs): string[] {
  * branch (cursor in left/Phases pane) and the "agents" branch (cursor in
  * right/agents pane after drilling in). Returns the full frame as lines.
  */
+/** Feed the shared sampler for every running agent of a run (keeps rates warm). */
+function feedRunAgents(model: NavigatorModel, runId: string, now: number): void {
+  for (const [, agents] of model.agentsByPhase(runId)) {
+    for (const a of agents) {
+      if (a.status === "running") {
+        sampleAgentTokens(runId, a.id, a.tokenUsage?.output ?? 0, now);
+      }
+    }
+  }
+}
+
+/** Sum of the running agents' generation rates for a run (the workflow's total TPS). */
+function sumAgentRates(model: NavigatorModel, runId: string): number {
+  let total = 0;
+  for (const [, agents] of model.agentsByPhase(runId)) {
+    for (const a of agents) {
+      if (a.status === "running") total += agentTokensPerSecond(runId, a.id);
+    }
+  }
+  return total;
+}
+
 function renderPhasesAgents(
   state: NavigatorState,
   model: NavigatorModel,
@@ -1454,11 +1471,11 @@ function renderNavigatorFrame(
       if (item.kind === "run") {
         const row = item.row;
         if (row.status === "running") {
-          sampleTokens(row.runId, model.runOutput(row.runId), now);
+          feedRunAgents(model, row.runId, now);
         }
         const icon = STATUS_ICON[row.status] ?? "?";
         const tok = fmtTokenSegment(row, pad);
-        const rate = row.status === "running" ? tokensPerSecond(row.runId) : 0;
+        const rate = row.status === "running" ? sumAgentRates(model, row.runId) : 0;
         const meta = [
           `${row.done}/${row.total}`,
           tok,
@@ -1476,6 +1493,7 @@ function renderNavigatorFrame(
       }
     }
   } else if (state.kind === "phases" && state.runId) {
+    feedRunAgents(model, state.runId, now);
     const phases = model.phases(state.runId);
     state.clamp(phases.length);
     // Two-line header (name + description/status) then the combined frame.
@@ -1484,6 +1502,7 @@ function renderNavigatorFrame(
     const bodyCap = Math.max(1, viewportRows - 2 /*header*/ - 2 /*rules*/ - 2 /*blank+footer*/);
     lines.push(...renderPhasesAgents(state, model, state.runId, width, theme, bodyCap, now));
   } else if (state.kind === "agents" && state.runId && state.phase) {
+    feedRunAgents(model, state.runId, now);
     const agents = model.agents(state.runId, state.phase);
     state.clamp(agents.length);
     const phases = model.phases(state.runId);
@@ -1609,9 +1628,11 @@ function twoPaneHeader(
   const nameText = truncateToWidth(name, width, ELLIPSIS, false);
   const line0 = theme.fg("accent", theme.bold(nameText));
 
-  // Line 1 — left status, right summary.
+  // Line 1 — left status, right summary (with the workflow's total generation rate).
   const headerSegment = fmtTokenSegment({ fresh, cacheRead }, compactTokens);
-  const rightRaw = `${done}/${total} ${pluralize("agent", total)}${headerSegment ? ` · ${headerSegment}` : ""}`;
+  const totalRate = sumAgentRates(model, runId);
+  const rateSeg = totalRate > 0 ? ` · ${Math.round(totalRate)} tok/s` : "";
+  const rightRaw = `${done}/${total} ${pluralize("agent", total)}${headerSegment ? ` · ${headerSegment}` : ""}${rateSeg}`;
   const rightW = visibleWidth(rightRaw);
   const gap = 2;
   let line1: string;
