@@ -1,7 +1,7 @@
 {
-  "version": "v1.0.0",
+  "version": "v1.0.1",
   "packages": [
-    "ssh://git@ssh.github.com:443/assid2/pi-extensions.git@v1.0.0",
+    "ssh://git@ssh.github.com:443/assid2/pi-extensions.git@v1.0.1",
     "npm:@tintinweb/pi-subagents@0.19.0",
     "npm:pi-ollama-cloud@0.9.0",
     "npm:@monotykamary/pi-tps@1.3.9",
