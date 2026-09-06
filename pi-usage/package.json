@@ -1,0 +1,67 @@
+{
+  "name": "@assid2/pi-usage",
+  "version": "0.1.0",
+  "description": "Per-account provider quota/balance/spend and per-agent token usage for Pi",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "extension",
+    "usage",
+    "accounts",
+    "subagents",
+    "ollama-cloud",
+    "opencode"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/assid2/pi-usage.git"
+  },
+  "homepage": "https://github.com/assid2/pi-usage#readme",
+  "bugs": {
+    "url": "https://github.com/assid2/pi-usage/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "type": "module",
+  "files": [
+    "extensions",
+    "docs",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"tests/*.test.ts\"",
+    "check": "npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@earendil-works/pi-tui": "0.84.4",
+    "@types/node": "24.13.3",
+    "typescript": "5.9.3"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/usage/index.ts"
+    ]
+  }
+}
