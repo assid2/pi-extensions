@@ -20,7 +20,8 @@ request.
 
    ```bash
    git ls-remote --tags ssh://git@ssh.github.com:443/assid2/pi-extensions.git \
-     | sed -n 's#refs/tags/\(v[0-9][0-9.]*\)\^{}$#\1#p' | sort -uV | tail -1
+     | awk -F'\t' '$2 ~ /^refs\/tags\/v[0-9]/ { t = $2; sub(/^refs\/tags\//, "", t); sub(/\^\{\}$/, "", t); print t }' \
+     | sort -uV | tail -1
    ```
 
 3. **Bootstrap or update (two-step, always pinned — never install an unpinned spec):**

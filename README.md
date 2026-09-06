@@ -70,7 +70,8 @@ unpinned "latest"):
 
    ```bash
    git ls-remote --tags ssh://git@ssh.github.com:443/assid2/pi-extensions.git \
-     | sed -n 's#refs/tags/\(v[0-9][0-9.]*\)\^{}$#\1#p' | sort -uV | tail -1
+     | awk -F'\t' '$2 ~ /^refs\/tags\/v[0-9]/ { t = $2; sub(/^refs\/tags\//, "", t); sub(/\^\{\}$/, "", t); print t }' \
+     | sort -uV | tail -1
    ```
 
 2. `pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<new-tag>` — moves the
@@ -108,6 +109,8 @@ inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` 
 
   ```bash
   git remote add upstream ssh://git@ssh.github.com:443/QuintinShaw/pi-dynamic-workflows.git
+  git config remote.upstream.fetch "+refs/heads/main:refs/remotes/upstream/main"  # branch only —
+                                                                                 # keeps upstream's npm release tags out of this repo's tag namespace
   git subtree pull --prefix=pi-dynamic-workflows upstream main     # absorb upstream
   git subtree split --prefix=pi-dynamic-workflows -b <branch>      # extract for an upstream PR
   ```
