@@ -29,18 +29,25 @@ any day → the same `packages` list.
 
 ### Easiest — ask your pi
 
-> Install `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` at its latest release tag,
-> then run its `deploy/apply.sh`.
+Paste this into any pi session:
 
-That one install drops the `deploy-pi-stack` skill into place, and from then on a plain
-**“deploy my pi stack”** or **“bring my pi up to the current deployment”** is all that's needed:
-the skill resolves the latest release tag itself, runs `apply.sh --dry-run` first, shows the plan,
-then applies.
+```
+Install ssh://git@ssh.github.com:443/assid2/pi-extensions.git at its latest release tag,
+then read the installed package's deploy/skills/deploy-pi-stack/SKILL.md and follow it
+exactly — it shows you the plan before changing anything.
+```
+
+The prompt is deliberately this small: it only bootstraps. The whole procedure (resolving the
+latest tag, dry-run first, additive apply, never prune, relay the output) lives in the repo
+itself — `deploy/skills/deploy-pi-stack/SKILL.md` + `reference.md` — and ships with every
+release, so the prompt and the procedure can never drift apart. After that one install the
+skill is part of the machine, and from then on a plain **“deploy my pi stack”** or **“bring
+my pi up to the current deployment”** is all that's needed.
 
 ### Manual, equivalent
 
 ```bash
-# <latest-tag> from the repo's tags page (e.g. v1.0.0)
+# <latest-tag> — resolved with the command in "Bringing a machine up to the current deployment"
 pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<latest-tag>
 $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 # (default agent dir: ~/.pi/agent)
