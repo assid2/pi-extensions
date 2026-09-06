@@ -8,11 +8,11 @@
 
 Two goals, in order:
 
-1. **Repo migration.** Two pi-extension projects currently kept as standalone checkouts under
-   `~/pi-dev/` become sub-projects of the (currently empty) GitHub repository
+1. **Repo migration.** Two pi-extension projects currently kept as standalone local checkouts
+   become sub-projects of the (currently empty) GitHub repository
    `assid2/pi-extensions`, accessed via **SSH over port 443**
-   (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`). The single local working tree is
-   `~/pi-dev/pi-extensions/`.
+   (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`). All development then happens in the
+   single checkout of that repository.
 2. **Full-stack deployment.** A reproducible "extension stack" that anyone can ask their own pi to
    install, such that the result is *exactly* the extension set satish currently runs — including
    extensions not authored by satish (installed from their original third-party sources). A fresh
@@ -32,13 +32,11 @@ to already run pi. It converges only the `packages` list in the user's pi settin
 | `npm:pi-ollama-cloud` | 0.9.0 | third-party |
 | `npm:@monotykamary/pi-tps` | 1.3.9 | third-party |
 | `git:github.com/obra/superpowers` | v6.3.0 (commit `b36e082`) | third-party |
-| `../../../../srv/web/pi-usage` | **path does not exist** | satish |
-| `../../../../srv/web/pi-dynamic-workflows` | **path does not exist** | satish (fork) |
+| two local-path entries (dead legacy locations) | **paths no longer exist** | satish (both his projects) |
 
-> **Bug this work fixes:** the two local-path entries resolve to `/srv/web/pi-usage` and
-> `/srv/web/pi-dynamic-workflows`, which do not exist (`/srv/web` contains only `io`,
-> `ionjewels`, `tickets`). Satish's own two extensions are therefore **not loaded at all** right now.
-> The `~/pi-dev/*` copies are orphans of those dead paths.
+> **Bug this work fixes:** the two local-path entries point at legacy locations on the machine
+> that no longer exist, so satish's own two extensions are **not loaded at all** right now. The
+> current standalone checkouts are orphans of those dead settings entries.
 
 Project facts:
 
@@ -50,14 +48,14 @@ Project facts:
   tok/s in the task panel and `/workflows` navigator, plus the shared `token-rate.ts` sampler).
   Runtime dependency: `acorn ^8.16.0`. `pi` manifest: `extensions` + 2 skills
   (`workflow-authoring`, `workflow-patterns`) + gallery image.
-- Environment: git 2.47.3 with `git subtree` available; `assid2/pi-extensions` exists and is
+- Environment: `git subtree` is available; `assid2/pi-extensions` exists and is
   **empty**; `PI_CODING_AGENT_DIR` can override pi's config dir (default `~/.pi/agent`) for
   isolated testing.
 
 ## 3. Target repository layout
 
 ```
-~/pi-dev/pi-extensions/                  ← single checkout of assid2/pi-extensions (branch: main)
+assid2/pi-extensions/                  ← single checkout (branch: main)
 ├── package.json                        ← ROOT pi-package manifest (what fresh machines load)
 ├── README.md                           ← bootstrap one-liner + "ask your pi" instructions
 ├── deployment.json                     ← the full-stack manifest: pinned specs, portable
@@ -85,7 +83,7 @@ stay byte-identical to their current projects except for their location in the t
 **Dual install modes from one codebase:**
 
 - **Dev machine (satish):** `settings.json` `packages` entries are *local paths* into the checkout
-  (e.g. `/home/satish/pi-dev/pi-extensions/pi-usage`). Pi reads each subdirectory's **own** `pi`
+  (e.g. `<absolute path to this checkout>/pi-usage`). Pi reads each subdirectory's **own** `pi`
   key → live development, hot-reloadable, no copies.
 - **Fresh machine:** one `pi install` of the monorepo git package; pi clones it, runs `npm install`
   at the root, and loads everything via the **root** `pi` manifest.
@@ -105,20 +103,19 @@ on upstream pulls.)
 Clean upstream-only changes merge automatically; overlapping edits produce ordinary conflict
 markers inside `pi-dynamic-workflows/`.
 
-## 4. Migration procedure (this machine)
+## 4. Migration procedure (dev machine)
 
-1. Clone the empty monorepo → `~/pi-dev/pi-extensions` (done; branch `main`).
+1. Clone the empty monorepo into the developer's working directory (done; branch `main`).
 2. **Initial commit** before any `subtree add` (verified gotcha: `subtree add` requires a
    non-empty repository): this spec document + a placeholder README.
-3. `git subtree add --prefix=pi-usage ~/pi-dev/pi-usage main` (2 commits, full history).
-4. `git subtree add --prefix=pi-dynamic-workflows ~/pi-dev/pi-dynamic-workflows main`
+3. `git subtree add --prefix=pi-usage <path to the pi-usage checkout> main` (2 commits, full history).
+4. `git subtree add --prefix=pi-dynamic-workflows <path to the pi-dynamic-workflows checkout> main`
    (full upstream history + the 5 local commits).
 5. Add the `upstream` remote (Section 3).
 6. Create the root `package.json`, `deployment.json`, and `deploy/` contents per Sections 3–5.
 7. Update `~/.pi/agent/settings.json`:
-   - replace the two dead `../../../../srv/web/…` entries with absolute paths
-     `/home/satish/pi-dev/pi-extensions/pi-usage` and
-     `/home/satish/pi-dev/pi-extensions/pi-dynamic-workflows`;
+   - replace the two dead local-path entries with absolute paths into the checkout
+     (`<checkout>/pi-usage` and `<checkout>/pi-dynamic-workflows`);
    - pin the four third-party entries to their currently installed versions, so the dev machine
      matches `deployment.json` exactly and `apply.sh --dry-run` reports zero changes:
      `npm:@tintinweb/pi-subagents@0.19.0`, `npm:pi-ollama-cloud@0.9.0`,
@@ -126,8 +123,8 @@ markers inside `pi-dynamic-workflows/`.
      design): `pi update --extensions` no longer moves unpinned third-party packages; updates are
      deliberate pin bumps, which is the reproducibility the deployment exists to provide.
 8. Verify both extensions load (`/reload`, then check the loaded extensions / run a subagent or
-   `/usage`), **then** remove the old standalone dirs `~/pi-dev/pi-usage` and
-   `~/pi-dev/pi-dynamic-workflows` (backed up to a tarball outside the tree first).
+   `/usage`), **then** remove the old standalone checkouts (backed up to a tarball outside the
+   tree first).
 9. Push `main` to origin and create tag **`v1.0.0`** — the first deployment release.
 
 ## 5. The full-stack deployment
@@ -217,8 +214,8 @@ Two flavors, both documented in README + skill:
 
 - **Fresh/other machines:** the manifest's monorepo ref is bumped to the new release tag (in the
   repo), and `apply.sh` re-run — pi moves the existing clone to the new pinned ref.
-- **Satish's dev machine:** the checkout *is* the source; `git pull` in
-  `~/pi-dev/pi-extensions` + `/reload` is the whole update.
+- **The dev machine:** the checkout *is* the source; `git pull` in the checkout + `/reload` is
+  the whole update.
 
 ## 6. Verification
 
@@ -226,7 +223,7 @@ All must pass before tagging `v1.0.0` and pushing:
 
 1. **Sub-project health, from the monorepo paths:** `pi-usage` — typecheck + 95/95 tests;
    `pi-dynamic-workflows` — its full `npm test` (Biome + tsc + unit tests + release checks).
-2. **Drift-free on this machine:** `deploy/apply.sh --dry-run` reports all 5 manifest entries
+2. **Drift-free on the dev machine:** `deploy/apply.sh --dry-run` reports all 5 manifest entries
    satisfied (3 npm pins + superpowers v6.3.0 + monorepo via the local-path dedup rule), zero
    planned changes, exit 0.
 3. **Fresh-install proof in a scratch environment:** with
@@ -237,8 +234,8 @@ All must pass before tagging `v1.0.0` and pushing:
    them; `npm install` at the clone root succeeded (root `node_modules/acorn` present). Re-run
    `apply.sh` → must be a no-op (idempotence).
 4. **Live machine:** after the `settings.json` rewrite, `/reload` in a pi session; both
-   extensions demonstrably active (e.g. `/usage` command present, workflow tool present); the two
-   old standalone dirs removed only after this succeeds.
+   extensions demonstrably active (e.g. `/usage` command present, workflow tool present); the
+   old standalone checkouts removed only after this succeeds.
 5. **Upstream mechanics:** `git subtree pull` against the real `upstream` remote completes clean
    (no upstream movement since the fork point is expected; any movement is merged); `git subtree
    split` of `pi-dynamic-workflows` produces a branch whose tree matches the pre-migration fork
