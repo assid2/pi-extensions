@@ -1,0 +1,39 @@
+{
+  "name": "pi-extensions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reproducible full-stack deployment of a curated pi extension set: pi-usage, pi-dynamic-workflows (patched fork), plus pinned third-party packages",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "deployment"
+  ],
+  "dependencies": {
+    "acorn": "^8.16.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true },
+    "typebox": { "optional": true }
+  },
+  "pi": {
+    "extensions": [
+      "pi-usage/extensions/usage/index.ts",
+      "pi-dynamic-workflows/dist/pi-extension.js"
+    ],
+    "skills": [
+      "pi-dynamic-workflows/skills/workflow-authoring",
+      "pi-dynamic-workflows/skills/workflow-patterns",
+      "deploy/skills/deploy-pi-stack"
+    ]
+  }
+}
