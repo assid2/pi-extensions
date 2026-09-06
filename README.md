@@ -81,6 +81,12 @@ pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<latest-tag>
     push that branch to a fork, open the PR.
   - Keep the sub-project's `package.json` name matching upstream (`@quintinshaw/…`) so pulls
     don't conflict on the name line.
+- **Working from another machine:** clone this repo (write access via your own SSH key or a
+  token), bring that machine's pi up to date (the Installing flow above, or just `apply.sh`),
+  then point `~/.pi/agent/settings.json` `packages` entries at the subdirectories of *your own*
+  clone for live development. Commit, push, and cut release tags from there — every other machine
+  converges by re-running `apply.sh`. Don't develop inside pi's managed clone
+  (`~/.pi/agent/git/…`): pi resets it on each update.
 
 ## Releasing a new deployment
 
