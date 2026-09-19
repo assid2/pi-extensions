@@ -1,0 +1,24 @@
+{
+  "credits": {
+    "monthlyCredits": 12.0,
+    "purchasedCredits": 3.0,
+    "freeCredits": 1.0,
+    "planId": "individual-provider"
+  },
+  "windowLimits": {
+    "limited": false,
+    "exceeded": null,
+    "fiveHour": {
+      "used": 2.25,
+      "cap": 3,
+      "exceeded": false,
+      "resetAt": 1786091731770
+    },
+    "weekly": {
+      "used": 6.24,
+      "cap": 6,
+      "exceeded": true,
+      "resetAt": 1786603898869
+    }
+  }
+}

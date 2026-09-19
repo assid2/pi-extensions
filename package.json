@@ -28,7 +28,8 @@
   "pi": {
     "extensions": [
       "pi-usage/extensions/usage/index.ts",
-      "pi-dynamic-workflows/dist/pi-extension.js"
+      "pi-dynamic-workflows/dist/pi-extension.js",
+      "pi-commandcode-cloud/index.ts"
     ],
     "skills": [
       "pi-dynamic-workflows/skills/workflow-authoring",

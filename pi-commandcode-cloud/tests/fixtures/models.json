@@ -1,0 +1,77 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-sonnet-5",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "Claude Sonnet 5",
+      "context_length": 1000000,
+      "supported_endpoints": ["/messages"]
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "Claude Haiku 4.5",
+      "context_length": 200000,
+      "supported_endpoints": ["/messages"]
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "DeepSeek V4.1 Flash",
+      "context_length": 1000000,
+      "supported_endpoints": ["/chat/completions", "/responses"]
+    },
+    {
+      "id": "Qwen/Qwen3.8-27B",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "Qwen 3.8 27B",
+      "context_length": 262144,
+      "supported_endpoints": ["/chat/completions", "/responses"]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "GPT-5.6 Sol",
+      "context_length": 1050000,
+      "supported_endpoints": ["/chat/completions", "/responses"]
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.5",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "MiniMax M2.5",
+      "context_length": 200000,
+      "supported_endpoints": ["/chat/completions", "/responses"]
+    },
+    {
+      "id": "zai-org/GLM-5.3",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "GLM-5.3",
+      "context_length": 1000000,
+      "supported_endpoints": ["/chat/completions", "/responses"]
+    },
+    {
+      "id": "xai/grok-4.6",
+      "object": "model",
+      "created": 1789814296,
+      "owned_by": "command-code",
+      "name": "Grok 4.6",
+      "context_length": 500000,
+      "supported_endpoints": ["/chat/completions", "/responses"]
+    }
+  ]
+}

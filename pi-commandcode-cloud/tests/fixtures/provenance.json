@@ -1,0 +1,77 @@
+{
+  "$comment": "Provenance for every fixture in this directory. `kind` is `captured` (recorded from a real HTTP response) or `synthetic` (hand-authored from the verified contract in docs/plans/pi-commandcode-cloud.md; no credential was available to capture a real payload). `responseBody` is the JSON file in this directory; `status` is the HTTP status the real endpoint returns for that body.",
+  "fixtures": [
+    {
+      "file": "models.json",
+      "kind": "captured",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/provider/v1/models",
+      "status": 200,
+      "capturedAt": "2026-09-19",
+      "source": "Live unauthenticated fetch recorded in recon (scripts/models.snapshot.json, 71 models).",
+      "transform": "Trimmed to 8 representative entries: 2 claude-* ([/messages] only) and 6 slash-containing OpenAI-wire ids.",
+      "redactions": "None (public catalog).",
+      "notes": "Confirms {object:\"list\",data:[{id,name,context_length,supported_endpoints}]} and the Anthropic/OpenAI split."
+    },
+    {
+      "file": "whoami.json",
+      "kind": "synthetic",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/alpha/whoami?limits=1",
+      "status": 200,
+      "source": "Hand-authored from plan §6.2 (whoami envelope + orgLimits shape).",
+      "redactions": "User/org ids replaced with *_Redacted* sentinels; email is a placeholder.",
+      "notes": "Includes slash-containing orgLimits model ids; resetAt:0 on orgLimits is not a lane source."
+    },
+    {
+      "file": "credits.json",
+      "kind": "synthetic",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/alpha/billing/credits?orgId=org_RedactedOrg01",
+      "status": 200,
+      "source": "Hand-authored from plan §6.2 (credits + windowLimits shape).",
+      "redactions": "None (credit values only).",
+      "notes": "weekly.used (6.24) exceeds weekly.cap (6) to pin clamping; weekly.exceeded is a boolean."
+    },
+    {
+      "file": "subscriptions.json",
+      "kind": "synthetic",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/alpha/billing/subscriptions?orgId=org_RedactedOrg01",
+      "status": 200,
+      "source": "Hand-authored from plan §6.2 (subscriptions {success,data} envelope).",
+      "redactions": "None.",
+      "notes": "currentPeriodStart feeds the summary `since` query; currentPeriodEnd feeds the Monthly resetsAt."
+    },
+    {
+      "file": "summary.json",
+      "kind": "synthetic",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/alpha/usage/summary?orgId=org_RedactedOrg01&since=2026-09-01T00:00:00.000Z",
+      "status": 200,
+      "source": "Hand-authored from plan §6.2 (summary totals).",
+      "redactions": "None.",
+      "notes": "totalCredits === totalCost here; parsers read totalCredits first, totalCost as fallback."
+    },
+    {
+      "file": "unauthorized.json",
+      "kind": "synthetic",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/alpha/whoami",
+      "status": 401,
+      "source": "Hand-authored from plan §6.2 (401 error envelope).",
+      "redactions": "None.",
+      "notes": "The 401 envelope shape; parseWhoami must reject it and fetchCommandCodeUsage must map it to the auth error."
+    },
+    {
+      "file": "credits-provider-plan.json",
+      "kind": "synthetic",
+      "method": "GET",
+      "url": "https://api.commandcode.ai/alpha/billing/credits?orgId=org_RedactedOrg01",
+      "status": 200,
+      "source": "Hand-authored from plan §6.3 (Provider plan has no rolling windows).",
+      "redactions": "None.",
+      "notes": "No windowLimits key at all: only the derived Monthly lane (or no lane) may render."
+    }
+  ]
+}

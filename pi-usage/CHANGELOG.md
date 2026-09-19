@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Add the `commandcode-cloud` adapter (Command Code `api.commandcode.ai/alpha/*`):
+  `5h` + `Weekly` rolling credit windows, a derived `Monthly` billing-period
+  lane, `monthlyCredits`/`purchasedCredits`/`freeCredits` balances, and
+  `spend.monthly` from `usage/summary` (`totalCredits ?? totalCost`).
+  Multi-request flow (`whoami` → `credits` + `subscriptions` parallel →
+  `usage/summary`) with per-endpoint degradation; endpoint override
+  `PI_COMMANDCODE_USAGE_ENDPOINT`; ZDR via `CMD_ZDR`/`COMMANDCODE_ZDR`;
+  `user_…`-key and `Bearer` redaction; pasted-key sanitization.
+
 ## 0.1.0 (2026-09-02)
 
 Initial release.

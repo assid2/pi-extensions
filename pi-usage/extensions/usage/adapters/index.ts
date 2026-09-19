@@ -12,6 +12,7 @@ import type { UsageConfig } from "../config.ts";
 import { createGenericAdapter } from "./generic.ts";
 import { fallbackAdapter } from "./fallback.ts";
 import { ollamaCloudAdapter } from "./ollama-cloud.ts";
+import { commandCodeCloudAdapter } from "./commandcode-cloud.ts";
 import { opencodeAdapter, opencodeGoAdapter } from "./opencode.ts";
 import { claudeAdapter } from "./claude.ts";
 import { codexAdapter } from "./codex.ts";
@@ -37,6 +38,7 @@ const KNOWN: Record<string, UsageAdapter> = {
   "moonshotai-cn": moonshotCnAdapter,
   baseten: basetenAdapter,
   "ollama-cloud": ollamaCloudAdapter,
+  "commandcode-cloud": commandCodeCloudAdapter,
   "opencode-go": opencodeGoAdapter,
   opencode: opencodeAdapter,
 };

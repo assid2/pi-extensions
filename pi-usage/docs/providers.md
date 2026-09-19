@@ -19,6 +19,7 @@ process environment at fetch time.
 | minimax | `https://api.minimax.io/v1/token_plan/remains` (+ legacy `/v1/api/openplatform/coding_plan/remains`) | `PI_MINIMAX_USAGE_ENDPOINT`, `PI_MINIMAX_LEGACY_USAGE_ENDPOINT` |
 | minimax-cn | `https://api.minimaxi.com/v1/token_plan/remains` (+ legacy) | `PI_MINIMAX_CN_USAGE_ENDPOINT`, `PI_MINIMAX_CN_LEGACY_USAGE_ENDPOINT` |
 | ollama-cloud | `https://ollama.com/api/usage` | `PI_OLLAMA_USAGE_ENDPOINT` |
+| commandcode-cloud | `https://api.commandcode.ai/alpha/whoami` + `/billing/credits` + `/billing/subscriptions` + `/usage/summary` | `PI_COMMANDCODE_USAGE_ENDPOINT` |
 | opencode-go | `https://opencode.ai/zen/go/v1/usage` | `PI_OPENCODE_GO_USAGE_ENDPOINT` |
 | opencode | `https://opencode.ai/zen/v1/usage` | `PI_OPENCODE_USAGE_ENDPOINT` |
 
@@ -38,6 +39,51 @@ process environment at fetch time.
 
 `usage` is a 0-1 fraction of the plan's REQUEST cap (5-hour and 7-day
 windows). `activity.cost` is the 4-week spend string.
+
+### commandcode-cloud (`/alpha/*`)
+
+The account/quota API lives at the host root (`https://api.commandcode.ai`,
+not `/provider/v1`) and uses the same `user_…` key as the Command Code
+Provider API. `PI_COMMANDCODE_USAGE_ENDPOINT` overrides the origin. Every call
+sends `Authorization: Bearer <key>`, `x-command-code-version`,
+`x-cli-environment: production`, and `x-cmd-zdr: 1` when `CMD_ZDR` /
+`COMMANDCODE_ZDR` is enabled.
+
+```jsonc
+// GET /alpha/whoami?limits=1
+{ "success": true,
+  "org": null | { "id": "org_…", "login": "…" },
+  "orgLimits": [ { "scope": "model", "model": "deepseek/deepseek-v4.1-flash", "spent": 1.2, "limit": 5, "exceeded": false } ] }
+
+// GET /alpha/billing/credits?orgId=org_…
+{ "credits": { "monthlyCredits": 12.0, "purchasedCredits": 3.0, "freeCredits": 1.0, "planId": "individual-provider" },
+  "windowLimits": {
+    "limited": false, "exceeded": null,
+    "fiveHour": { "used": 2.25, "cap": 3, "exceeded": false, "resetAt": 1786091731770 },
+    "weekly":   { "used": 6.24, "cap": 12, "exceeded": false, "resetAt": 1786603898869 } } }
+
+// GET /alpha/billing/subscriptions?orgId=org_…
+{ "success": true, "data": { "planId": "individual-provider", "status": "active",
+  "currentPeriodStart": "2026-09-01T00:00:00.000Z", "currentPeriodEnd": "2026-10-01T00:00:00.000Z" } }
+
+// GET /alpha/usage/summary?orgId=org_…&since=2026-09-01T00:00:00.000Z
+{ "totalCount": 17641, "totalCost": 67.68, "totalCredits": 67.68, "successRate": 100, "periodBasis": "billing-period" }
+```
+
+Lanes: `5h` = `windowLimits.fiveHour`, `Weekly` = `windowLimits.weekly`
+(percent = `used/cap`; `resetAt` is epoch **milliseconds** and is omitted when
+`<= 0` or the window is `0/0`). `Monthly` is **derived**, not a `windowLimits`
+key: used = `summary.totalCredits ?? summary.totalCost`, remaining =
+`credits.monthlyCredits`, cap = used + remaining (plan-nominal fallback from
+the `planId` when no `usage/summary` total is available). Balances are
+`monthlyCredits` / `purchasedCredits` / `freeCredits`, and `spend.monthly` is
+the derived used total. Provider/pay-as-you-go plans have no rolling windows,
+so they render Monthly-only (or no lanes). A failed section is reported as
+unavailable, never as `0`.
+
+The request order is `whoami` → (`credits` + `subscriptions` in parallel) →
+`usage/summary`; `orgId` and `since` are omitted when unavailable, and a 401
+is returned to pi-usage as an error with `status: 401` for backoff.
 
 ### opencode-go (`/zen/go/v1/usage`)
 

@@ -1,0 +1,33 @@
+{
+  "success": true,
+  "user": {
+    "id": "u_RedactedUser01",
+    "name": "Ada Lovelace",
+    "userName": "ada",
+    "email": "ada@example.com"
+  },
+  "org": {
+    "id": "org_RedactedOrg01",
+    "login": "acme"
+  },
+  "orgLimits": [
+    {
+      "scope": "model",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "spent": 1.2,
+      "limit": 5,
+      "exceeded": false,
+      "resetInterval": "monthly",
+      "resetAt": 0
+    },
+    {
+      "scope": "model",
+      "model": "Qwen/Qwen3.8-27B",
+      "spent": 4.75,
+      "limit": 5,
+      "exceeded": true,
+      "resetInterval": "monthly",
+      "resetAt": 0
+    }
+  ]
+}

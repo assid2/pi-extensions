@@ -11,7 +11,8 @@ Per-account provider quota/balance/spend **and** per-agent token usage for the
   pi-dynamic-workflows) with its own provider/account: tokens in/out/cache,
   cost, status, and duration.
 - **New providers** — `ollama-cloud` (request-count 5h/7d limits + 4-week
-  spend) and `opencode-go` (dollar-denominated 5h/$12 · weekly/$30 ·
+  spend), `commandcode-cloud` (Command Code 5h/weekly/monthly credit windows +
+  balances), and `opencode-go` (dollar-denominated 5h/$12 · weekly/$30 ·
   monthly/$60 limits) plus `opencode` (Zen, spend-only).
 - **Custom/local providers** — anything without a usage endpoint (your local
   vLLM, llama.cpp, unknown models.json entries) still shows session/agent
@@ -95,6 +96,7 @@ windows, balances, and spend breakdowns.
 | `kimi-coding` | 5-hour + weekly % + resets | `api.kimi.com/coding/v1/usages` |
 | `minimax` / `minimax-cn` | interval + weekly % + credit balance | `api.minimax.io` / `api.minimaxi.com` token-plan endpoints |
 | `ollama-cloud` | 5h + 7d **request** % + 4-week spend | `ollama.com/api/usage` |
+| `commandcode-cloud` | 5h + weekly + monthly % + credit balances + spend | `api.commandcode.ai/alpha/{whoami,billing,usage}/*` |
 | `opencode-go` | 5h/$12 · weekly/$30 · monthly/$60 (dollar-based) | `opencode.ai/zen/go/v1/usage` |
 | `opencode` | spend rows (credit-billed) | `opencode.ai/zen/v1/usage` |
 | anything else | session/agent usage only (fallback) | — |
