@@ -6,6 +6,12 @@
 
 ## Amendments
 
+- **v1.1.1 — retired entries and duplicate checkouts.** `deployment.json` gained a `retired` list
+  (`npm:pi-ollama-cloud`, whose fork now ships in this repository). In additive mode `apply.sh`
+  now removes manifest-retired entries and local-path entries that point at a *different* checkout
+  of this repository (identified from that clone's `deployment.json` self-pin, so it works even
+  without an `origin` remote); `--prune` remains the only mode that removes unrelated drift. This
+  makes a re-converge self-healing for the two drift classes the vendor/`main` mismatch produced.
 - **v1.1.0 — `pi-ollama-cloud` is vendored.** `pi-ollama-cloud` left the unpinned third-party list
   and joined this repository as a git-subtree fork (`pi-ollama-cloud/`, upstream v0.12.1). The fork
   is prefix-aware: the `ollama-<label>` namespace is honored by the status bar, `/ollama-cloud-usage`,

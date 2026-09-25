@@ -68,8 +68,11 @@ $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 
 - **Additive by default:** installs anything from the manifest that's missing; moves entries to
   the pinned ref/version when they differ, unpins any entry the manifest leaves unversioned, and
-  refreshes every unpinned third-party entry to its **latest release** (`pi update`). Anything you
-  already have that is not in the manifest is **left alone** and reported as drift.
+  refreshes every unpinned third-party entry to its **latest release** (`pi update`). It also
+  removes entries the manifest explicitly **retires** (one-time migrations, e.g. `npm:pi-ollama-cloud`
+  now that the fork is vendored here) and hand-added local-path entries that point at a *different*
+  checkout of this repository. Anything else you already have that is not in the manifest is **left
+  alone** and reported as drift.
 - **`apply.sh --prune`** additionally removes non-manifest packages → an *exact mirror* of the
   stack. Use only when you deliberately want your stack replaced.
 - **`apply.sh --dry-run`** prints the per-entry plan and changes nothing; **`apply.sh --check`**
@@ -110,7 +113,7 @@ inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` 
 
 | Extension | Source | Ref |
 |---|---|---|
-| pi-usage + pi-dynamic-workflows + pi-ollama-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | this repository's own release tag (frozen) |
+| pi-usage + pi-dynamic-workflows + pi-ollama-cloud + pi-commandcode-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | this repository's own release tag (frozen) |
 | pi-subagents | `npm:@tintinweb/pi-subagents` | latest |
 | pi-tps | `npm:@monotykamary/pi-tps` | latest |
 | superpowers | `git:github.com/obra/superpowers` | latest |

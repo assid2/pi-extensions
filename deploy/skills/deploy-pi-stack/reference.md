@@ -7,7 +7,7 @@ repository. It declares:
 
 | Package | Ref | What it provides |
 |---|---|---|
-| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | its own release tag (frozen) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `pi-dynamic-workflows` (dynamic workflows, patched fork of `@quintinshaw/pi-dynamic-workflows`), and `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider) |
+| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | its own release tag (frozen) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `pi-dynamic-workflows` (dynamic workflows, patched fork of `@quintinshaw/pi-dynamic-workflows`), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
 | `npm:@tintinweb/pi-subagents` | latest (unpinned) | subagent orchestration tools |
 | `npm:@monotykamary/pi-tps` | latest (unpinned) | tokens/second display |
 | `git:github.com/obra/superpowers` | latest (unpinned) | superpowers skill suite |
@@ -27,6 +27,13 @@ different third-party versions; that is by design.
 - **Third-party float.** Non-self entries in `deployment.json` are unversioned. `apply.sh` installs
   them unpinned and runs `pi update` for each one on every apply, so they always take the latest
   release. Never add a version to a third-party entry unless you deliberately want to freeze it.
+- **Retired entries.** `deployment.json` may list `retired` package specs (for example
+  `npm:pi-ollama-cloud`, which moved into this repository as a vendored fork). `apply.sh` removes
+  any matching settings entry with `pi remove`, even in additive mode — retired entries are
+  one-time migrations, not unrelated drift. It also removes a local-path entry that points at a
+  *different* checkout of this repository (detected from that clone's `deployment.json` self-pin,
+  so it works even when the duplicate has no `origin` remote); such a copy would otherwise
+  double-load the repository's extensions.
 - **`--check` is structural.** It asserts the declared entries are present with the declared pins;
   it cannot detect that upstream has published something newer.
 - **`deployment.json` release rule** (enforced as a check inside `apply.sh`, not prose): the file's
@@ -34,7 +41,9 @@ different third-party versions; that is by design.
 
 ## What `apply.sh` guarantees
 
-- Additive by default; `--prune` is the only mode that removes anything, and it is never implied.
+- Additive by default: it never removes packages you added yourself. `--prune` is the only mode
+  that removes *unrelated* drift, and it is never implied. Additive mode does remove
+  manifest-declared retired entries and duplicate checkouts of this repository (see above).
 - `--dry-run` prints the plan and changes nothing. `--check` exits non-zero if not *structurally*
   converged (CI-friendly).
 - Unpinned manifest entries are always refreshed to the latest release (`pi update <spec>`): npm
@@ -70,18 +79,28 @@ different third-party versions; that is by design.
 
 - **`pi install` of the monorepo fails on SSH:** check `ssh -v -p 443 git@ssh.github.com` and
   `~/.ssh/config`; GitHub's ssh.github.com:443 is the fallback for networks that block port 22.
-- **Clone path:** pi clones git packages to `$PI_CODING_AGENT_DIR/git/<host>/<path>` — for this
-  repository that is `$PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions` (host is the
-  literal URL host; `ssh.github.com` is *not* normalized to `github.com`).
+- **Clone path:** pi clones git packages to `$PI_CODING_AGENT_DIR/git/<host>/<path>`, where
+  `<host>` is the literal URL host and is *not* normalized: the SSH self-pin produces
+  `.../git/ssh.github.com/assid2/pi-extensions`, while an `https://github.com/...` origin produces
+  `.../git/github.com/assid2/pi-extensions`. Resolve it from `pi list` rather than assuming.
 - **`apply.sh: ERROR: release rule violated`:** the checkout's `deployment.json` is internally
   inconsistent (version field vs self-pin). Refuse to run; this is a broken release, report it.
 - **Post-condition MISMATCH after a pin bump:** the clone was not actually moved (a failed
   `pi install`); re-run step 3 and check its exit status before applying.
+- **Settings pin looks converged but the tree is not:** a clone can be one commit or more past its
+  pin (`describe: v1.0.2-1-g39ed164` while settings says `@v1.0.2`). `apply.sh` compares settings
+  identities, not working-tree content, so it cannot see this. After step 3, assert
+  `git -C <clone> describe --tags --exact-match HEAD` equals the resolved tag; if it does not,
+  re-clone or reset the clone to that tag before applying.
 - **A third-party package looks stale:** run `apply.sh` again — it refreshes every unpinned entry
   with `pi update <spec>` (or run that command directly). A bare `pi install` of an unpinned npm
   spec can resolve inside the version range recorded earlier; the explicit `pi update` pass is what
   guarantees the newest release.
-- **Upgrading from the npm `pi-ollama-cloud`:** `apply.sh` is additive, so an existing
-  `npm:pi-ollama-cloud` entry is left in place as drift — and would double-load `ollama-cloud`
-  alongside the vendored fork (duplicate provider, commands, and web tools). Remove it once with
-  `pi remove npm:pi-ollama-cloud`, or run `apply.sh --prune` deliberately.
+- **The npm `pi-ollama-cloud` is obsolete:** since the fork was vendored into this repository,
+  `deployment.json` lists it under `retired`; `apply.sh` removes a stale `npm:pi-ollama-cloud`
+  entry with `pi remove` in additive mode (otherwise it double-loads the `ollama-cloud` provider,
+  commands, and web tools). If an older `apply.sh` reports it only as `DRIFT`, remove it manually
+  once: `pi remove npm:pi-ollama-cloud`.
+- **A hand-added local-path entry points at another copy of this repo:** `apply.sh` reports it as
+  `RETIRE` and removes it with `pi remove` (additive). If the entry is a deliberate dev checkout
+  whose git origin matches this repository, the dev-checkout dedup rule keeps it instead.

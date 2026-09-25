@@ -1,9 +1,12 @@
 {
-  "version": "v1.1.0",
+  "version": "v1.1.1",
   "packages": [
-    "ssh://git@ssh.github.com:443/assid2/pi-extensions.git@v1.1.0",
+    "ssh://git@ssh.github.com:443/assid2/pi-extensions.git@v1.1.1",
     "npm:@tintinweb/pi-subagents",
     "npm:@monotykamary/pi-tps",
     "git:github.com/obra/superpowers"
+  ],
+  "retired": [
+    "npm:pi-ollama-cloud"
   ]
 }

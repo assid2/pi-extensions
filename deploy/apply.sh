@@ -2,9 +2,11 @@
 # apply.sh — converge a pi install to the extension stack declared in ../deployment.json.
 #
 # Usage:
-#   apply.sh             additive apply: install/move manifest entries to their pins and
-#                        refresh unpinned entries to the latest release (`pi update`);
-#                        packages not in the manifest are left alone and reported as drift
+#   apply.sh             additive apply: install/move manifest entries to their pins,
+#                        refresh unpinned entries to the latest release (`pi update`),
+#                        and remove entries the manifest explicitly retires (one-time
+#                        migrations such as a package that moved into this repo);
+#                        other packages not in the manifest are left alone (drift)
 #   apply.sh --dry-run   print the per-entry plan; change nothing; exit 0
 #   apply.sh --check     exit non-zero if the target is not currently converged; print what differs
 #   apply.sh --prune     exact mirror: also remove settings entries not in the manifest
@@ -16,6 +18,9 @@
 #   - Converges exclusively through pi's own CLI (pi install / pi remove / pi update). It never
 #     writes or rewrites any JSON file, never hand-edits settings, and touches only the `packages`
 #     key — never auth.json, models.json, models-store.json, AGENTS.md, or any other file.
+#   - Removes manifest-declared retired entries, and local-path entries that are a duplicate
+#     checkout of this same repo, with `pi remove` even in additive mode; `--prune` is still
+#     required to remove unrelated drift.
 #   - Sequential, one entry at a time; the first failure stops the run with a non-zero exit
 #     and the full per-entry status table.
 #   - Post-condition (apply mode): after converging, the settings `packages` list is
@@ -124,6 +129,7 @@ const settingsPath = process.argv[5];
 const prune = process.argv[6] === "1";
 const headTag = process.argv[7];
 const headShort = process.argv[8];
+const repoRoot = process.argv[9];
 
 const CANON_DOMAINS = { "ssh.github.com": "github.com", "github.com": "github.com" };
 
@@ -160,7 +166,7 @@ function splitRef(spec) {
 }
 
 function parseSpec(spec, baseDir) {
-  const out = { kind: "unknown", identity: null, pin: null, spec, display: spec, resolved: null, originIdentity: null };
+  const out = { kind: "unknown", identity: null, pin: null, spec, display: spec, resolved: null, originIdentity: null, resolvedRoot: null, repoIdentity: null };
   if (spec.startsWith("npm:")) {
     const { url, ref } = splitRef(spec.slice(4));
     out.kind = "npm"; out.identity = "npm:" + url; out.pin = ref;
@@ -173,9 +179,23 @@ function parseSpec(spec, baseDir) {
     out.kind = "local"; out.identity = "local:" + abs; out.pin = null; out.resolved = abs;
     try {
       const top = execFileSync("git", ["-C", abs, "rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-      const url = execFileSync("git", ["-C", top, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
-      const n = normGitUrl(url);
-      if (n) out.originIdentity = "git:" + n.dom + "/" + n.path;
+      out.resolvedRoot = top;
+      try {
+        const url = execFileSync("git", ["-C", top, "remote", "get-url", "origin"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+        const n = normGitUrl(url);
+        if (n) out.originIdentity = "git:" + n.dom + "/" + n.path;
+      } catch {}
+      // Identify a clone of this same repo even when it has no origin remote (for
+      // example a vendored copy): read its own deployment.json monorepo self-pin.
+      try {
+        const dep = JSON.parse(fs.readFileSync(path.join(top, "deployment.json"), "utf8"));
+        const selfSpec = (dep.packages || []).find((p) => typeof p === "string" && p.includes("assid2/pi-extensions"));
+        if (selfSpec) {
+          const { url } = splitRef(selfSpec.startsWith("git:") ? selfSpec.slice(4) : selfSpec);
+          const n = normGitUrl(url);
+          if (n) out.repoIdentity = "git:" + n.dom + "/" + n.path;
+        }
+      } catch {}
     } catch {}
   }
   return out;
@@ -203,6 +223,8 @@ const manifestEntries = manifest.packages.map((s) => parseSpec(s, agentDir));
 for (const e of manifestEntries) {
   if (!e.identity) { console.error("apply.sh: ERROR: cannot parse manifest entry: " + e.spec); process.exit(1); }
 }
+const retiredEntries = (Array.isArray(manifest.retired) ? manifest.retired : []).map((s) => parseSpec(s, agentDir));
+const retiredIdentities = new Set(retiredEntries.map((e) => e.identity));
 
 // Release rule (a check, not prose): the monorepo self-entry must pin exactly the version.
 const self = manifestEntries.find((e) => e.identity === selfIdentity);
@@ -293,6 +315,17 @@ if (mode === "plan") {
     if (matchedSettings.has(s)) return;
     const isSelfSatisfier = s.kind === "local" && s.originIdentity === selfIdentity;
     if (isSelfSatisfier) return; // matched the self entry via dedup, not drift
+    if (retiredIdentities.has(s.identity)) {
+      converged = 0;
+      lines.push("R\t" + s.display + "\tretired by the manifest — apply runs `pi remove`");
+      return;
+    }
+    const isDuplicateCheckout = s.kind === "local" && s.repoIdentity === selfIdentity && s.resolvedRoot && s.resolvedRoot !== repoRoot;
+    if (isDuplicateCheckout) {
+      converged = 0;
+      lines.push("R\t" + s.display + "\tduplicate checkout of this repo (" + s.resolvedRoot + ") — apply runs `pi remove`");
+      return;
+    }
     if (prune) { matchedSettings.add(s); converged = 0; }
     lines.push(prune ? "D\t" + s.display + "\tremove (not in manifest) --prune"
                      : "D\t" + s.display + "\tnot in manifest — left as-is (drift)");
@@ -322,6 +355,10 @@ manifestEntries.forEach((e) => {
     if (cur.pin !== e.pin) failures.push("  MISMATCH: " + e.spec + " — settings has " + (cur.pin === null ? "(unpinned)" : cur.pin) + ", manifest pins " + (e.pin === null ? "(unpinned)" : e.pin));
   }
 });
+settings.forEach((s) => {
+  if (retiredIdentities.has(s.identity)) { failures.push("  RETIRED: " + s.display + " (still present after apply)"); return; }
+  if (s.kind === "local" && s.repoIdentity === selfIdentity && s.resolvedRoot && s.resolvedRoot !== repoRoot) failures.push("  DUPLICATE: " + s.display + " (still present after apply)");
+});
 if (prune) {
   const manIds = new Set(manifestEntries.map((e) => e.identity));
   settings.forEach((s) => {
@@ -339,7 +376,7 @@ console.log("Post-condition: PASS (" + manifestEntries.length + " manifest entri
 ';
 
 run_planner() {
-  node -e "$NODE_PLANNER" "$1" "$MANIFEST" "$ORIGIN_URL" "$AGENT_DIR" "$SETTINGS" "${PRUNE_FLAG:-0}" "$HEAD_TAG" "$HEAD_SHORT"
+  node -e "$NODE_PLANNER" "$1" "$MANIFEST" "$ORIGIN_URL" "$AGENT_DIR" "$SETTINGS" "${PRUNE_FLAG:-0}" "$HEAD_TAG" "$HEAD_SHORT" "$REPO_ROOT"
 }
 
 PRUNE_FLAG=0
@@ -360,6 +397,7 @@ print_plan() {
     case "$kind" in
       M) printf '  [%-12s] %s\n      %s\n' "$b" "$c" "$d" ;;
       D) printf '  [DRIFT     ] %s\n      %s\n' "$a" "$b" ;;
+      R) printf '  [RETIRE    ] %s\n      %s\n' "$a" "$b" ;;
       N) printf '  note: %s\n' "$a" ;;
     esac
   done
@@ -404,6 +442,12 @@ while IFS=$'\t' read -r kind spec detail; do
   [ "$kind" = D ] || continue
   DRIFT_SPECS+=("$spec")
 done < <(printf '%s\n' "$PLAN" | grep -E '^D	')
+
+declare -a RETIRE_SPECS
+while IFS=$'\t' read -r kind spec detail; do
+  [ "$kind" = R ] || continue
+  RETIRE_SPECS+=("$spec")
+done < <(printf '%s\n' "$PLAN" | grep -E '^R	')
 
 print_plan
 echo
@@ -460,6 +504,19 @@ for i in "${!ACTIONS[@]}"; do
   esac
 done
 
+# Retired entries (formerly-manifest packages and duplicate checkouts of this repo)
+# are removed even in additive mode: they are one-time migrations, not unrelated drift.
+retired=0
+for spec in "${RETIRE_SPECS[@]}"; do
+  if ! out="$(pi remove "$spec" 2>&1)"; then
+    echo "FAILED: pi remove $spec (retired/duplicate)" >&2
+    [ -n "$out" ] && echo "$out" | sed 's/^/    /' >&2
+    failed=1; break
+  fi
+  echo "ok: pi remove $spec (retired/duplicate — no longer in the manifest)"
+  retired=$((retired + 1))
+done
+
 removed=0
 if [ "$MODE" = "prune" ] && [ "$failed" = 0 ]; then
   for spec in "${DRIFT_SPECS[@]}"; do
@@ -481,6 +538,7 @@ if [ "$failed" != 0 ]; then
     case "$kind" in
       M) printf '  [%-12s] %s\n' "$b" "$c" ;;
       D) printf '  [DRIFT     ] %s\n' "$a" ;;
+      R) printf '  [RETIRE    ] %s\n' "$a" ;;
     esac
   done >&2
   exit 1
