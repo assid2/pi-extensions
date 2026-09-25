@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseOllamaCloudUsage, ollamaCloudAdapter } from "../extensions/usage/adapters/ollama-cloud.ts";
+import { resolveAdapter } from "../extensions/usage/adapters/index.ts";
 import type { FetchLike } from "../extensions/usage/adapters/types.ts";
 
 function fakeFetch(payload: unknown, status = 200): FetchLike {
@@ -30,6 +31,18 @@ test("parseOllamaCloudUsage: request-count fractions + 4-week spend", () => {
 
 test("parseOllamaCloudUsage: unrecognized shape returns null", () => {
   assert.equal(parseOllamaCloudUsage({ nope: true }), null);
+});
+
+test("resolveAdapter: every ollama-* id maps to the ollama-cloud adapter", () => {
+  const config = { adapters: {} } as never;
+  assert.equal(resolveAdapter("ollama-cloud", config), ollamaCloudAdapter);
+  assert.equal(resolveAdapter("ollama-assid2", config), ollamaCloudAdapter);
+  assert.equal(resolveAdapter("ollama-work", config), ollamaCloudAdapter);
+});
+
+test("resolveAdapter: an explicit config attachment overrides the ollama-* rule", () => {
+  const adapter = resolveAdapter("ollama-custom", { adapters: { "ollama-custom": { usageEndpoint: "https://example.test/usage" } } } as never);
+  assert.notEqual(adapter, ollamaCloudAdapter);
 });
 
 test("ollamaCloudAdapter: fetch happy path and 401", async () => {

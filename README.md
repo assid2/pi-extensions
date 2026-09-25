@@ -1,9 +1,10 @@
 # pi-extensions
 
-Monorepo of pi extensions with a **reproducible full-stack deployment**: one install gives you
-exactly the extension stack declared in [`deployment.json`](deployment.json) — including
-extensions not authored here — on any machine running [pi](https://pi.dev). Same tag, any machine,
-any day → the same `packages` list.
+Monorepo of pi extensions with a **single-command full-stack deployment**: one install gives you
+the extension stack declared in [`deployment.json`](deployment.json) — including extensions not
+authored here — on any machine running [pi](https://pi.dev). The repository pins *itself* (a
+machine bootstrapped at `vX` stays at `vX` until you explicitly update it); **third-party packages
+are deliberately unpinned and always float to their latest release**.
 
 ## Prerequisites (target machine)
 
@@ -21,9 +22,19 @@ any day → the same `packages` list.
 |---|---|
 | [`pi-usage/`](pi-usage/) | `@assid2/pi-usage` — per-account provider quota/balance/spend (footer + `/usage` dialog) and per-agent token usage (TypeScript source, loaded directly) |
 | [`pi-dynamic-workflows/`](pi-dynamic-workflows/) | Patched fork of `@quintinshaw/pi-dynamic-workflows` (per-agent + aggregate tok/s), merged with upstream v3.10.1. Its compiled entrypoint `dist/pi-extension.js` is **committed here** (it is gitignored upstream) so a fresh install loads frozen bytes; rebuild with `npm run build` after source changes |
-| [`deployment.json`](deployment.json) | The stack manifest: the repository's self-pin plus exact pins for every third-party package. Portable — no local paths |
+| [`pi-ollama-cloud/`](pi-ollama-cloud/) | Patched fork of `pi-ollama-cloud` (upstream `fgrehm/pi-ollama-cloud`, MIT), merged with upstream v0.12.1. The patch makes the package prefix-aware: its status bar, `/ollama-cloud-usage`, and web tools follow **any** active `ollama-*` provider and use that member's own key (TypeScript source, loaded directly) |
+| [`deployment.json`](deployment.json) | The stack manifest: the repository's own self-pin plus the third-party packages to install. Third-party entries are **unversioned** — `apply.sh` takes their latest release on every apply. Portable — no local paths |
 | [`deploy/apply.sh`](deploy/apply.sh) | Idempotent converger: brings any pi install in line with `deployment.json` (`--dry-run`, `--check` for CI, `--prune` for an exact mirror) |
+| [`pi-commandcode-cloud/`](pi-commandcode-cloud/) | `@assid2/pi-commandcode-cloud` — Command Code model provider (OpenAI/Anthropic-compatible) with `/login`, an opt-in usage footer, and a `pi-usage` adapter (TypeScript source, loaded directly) |
 | [`deploy/skills/deploy-pi-stack/`](deploy/skills/deploy-pi-stack/) | The skill that lets you *ask your pi* to run the deployment (`SKILL.md` + `reference.md`) |
+
+`pi-commandcode-cloud` registers the `commandcode-cloud` provider so you can run Command Code
+(`commandcode.ai`) models in pi. Sign in with `/login commandcode-cloud` (API-key paste or browser
+loopback), or set `COMMAND_CODE_API_KEY` (aliases `COMMANDCODE_API_KEY` / `CMD_API_KEY`). It ships
+the four helper commands `/commandcode-usage`, `/commandcode-usage-status`, `/commandcode-status`,
+and `/commandcode-refresh`, and an **opt-in** quota footer (`usageStatus`, default off). The same
+data is exposed to `pi-usage` through the `commandcode-cloud` adapter id, gated to the active
+provider. See [`pi-commandcode-cloud/README.md`](pi-commandcode-cloud/README.md).
 
 ## Installing the stack
 
@@ -56,13 +67,16 @@ $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 ### What it does — and what it never does
 
 - **Additive by default:** installs anything from the manifest that's missing; moves entries to
-  the pinned ref/version when they differ. Anything you already have that is not in the manifest
-  is **left alone** and reported as drift.
+  the pinned ref/version when they differ, unpins any entry the manifest leaves unversioned, and
+  refreshes every unpinned third-party entry to its **latest release** (`pi update`). Anything you
+  already have that is not in the manifest is **left alone** and reported as drift.
 - **`apply.sh --prune`** additionally removes non-manifest packages → an *exact mirror* of the
   stack. Use only when you deliberately want your stack replaced.
 - **`apply.sh --dry-run`** prints the per-entry plan and changes nothing; **`apply.sh --check`**
-  exits non-zero when the machine is not converged (CI-friendly).
-- It converges only through pi's own CLI (`pi install` / `pi remove`), touches only the
+  exits non-zero when the machine is not *structurally* converged (CI-friendly — it verifies that
+  the declared entries are present with the right pins; it cannot see whether a newer upstream
+  release exists, since latest moves).
+- It converges only through pi's own CLI (`pi install` / `pi remove` / `pi update`), touches only the
   `packages` key, and never opens, rewrites, or reorders `auth.json`, model/provider config,
   `AGENTS.md`, or any other file.
 - **Security:** pi packages run with full system access. Only install stacks you trust.
@@ -70,8 +84,9 @@ $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 ## Bringing a machine up to the current deployment
 
 The monorepo entry pins *itself* (frozen), so a machine bootstrapped at `vX` stays at `vX` until
-you explicitly update it. The update is a **two-step, always-pinned** flow (never install an
-unpinned "latest"):
+you explicitly update it. Updating the **repository** is a two-step, always-pinned flow — never
+install this repository unpinned. (Third-party entries are a different story: they carry no version,
+and `apply.sh` refreshes them to their latest release every time it runs.)
 
 1. Resolve the highest release tag at run time:
 
@@ -83,22 +98,26 @@ unpinned "latest"):
 
 2. `pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<new-tag>` — moves the
    existing clone to the new ref and rewrites the pinned settings entry.
-3. Run `deploy/apply.sh` **from the updated clone**, so the new `deployment.json` governs.
+3. Run `deploy/apply.sh` **from the updated clone**, so the new `deployment.json` governs — this
+   step also refreshes every third-party package to its latest release.
 
 The `deploy-pi-stack` skill performs exactly these steps when you ask your pi.
 
 On the development checkout itself, updating is just `git pull` (+ `npm ci && npm run build`
 inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` in pi.
 
-## The stack (v1.0.0)
+## The stack
 
-| Extension | Source | Pin |
+| Extension | Source | Ref |
 |---|---|---|
-| pi-usage + pi-dynamic-workflows (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | `v1.0.0` |
-| pi-subagents | `npm:@tintinweb/pi-subagents` | `0.19.0` |
-| pi-ollama-cloud | `npm:pi-ollama-cloud` | `0.9.0` |
-| pi-tps | `npm:@monotykamary/pi-tps` | `1.3.9` |
-| superpowers | `git:github.com/obra/superpowers` | `v6.3.0` |
+| pi-usage + pi-dynamic-workflows + pi-ollama-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | this repository's own release tag (frozen) |
+| pi-subagents | `npm:@tintinweb/pi-subagents` | latest |
+| pi-tps | `npm:@monotykamary/pi-tps` | latest |
+| superpowers | `git:github.com/obra/superpowers` | latest |
+
+Third-party versions are intentionally absent from `deployment.json`: whatever npm or GitHub
+publishes as latest is what a machine converges to on the next `apply.sh`. The repository's own
+tag is the only fixed point in the stack.
 
 ## Development
 
@@ -138,4 +157,5 @@ inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` 
 2. If workflows sources changed: `npm ci && npm run build` in `pi-dynamic-workflows/` and
    re-commit the rebuilt `dist/`.
 3. `git tag v1.x.0 && git push origin main v1.x.0`
-4. Machines converge by re-running `deploy/apply.sh` — or just asking their pi.
+4. Machines converge by re-running `deploy/apply.sh` — or just asking their pi. Keep the
+   third-party entries unversioned in `deployment.json`: a release pins only this repository.

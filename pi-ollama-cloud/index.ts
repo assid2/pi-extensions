@@ -29,7 +29,7 @@ import { loadConfig, resolveWebToolsEnv } from "./config.ts";
 import { GENERATED_MODELS } from "./models.generated.ts";
 import { OLLAMA_BASE, refreshOllamaCatalog } from "./models.ts";
 import { fetchUsage, formatUsage, formatUsageStatusColored } from "./usage.ts";
-import { getCloudApiKey } from "./utils.ts";
+import { getCloudApiKey, isOllamaProviderId } from "./utils.ts";
 import { registerWebFetchTool, registerWebSearchTool } from "./web-tools.ts";
 
 /**
@@ -48,6 +48,15 @@ export function resolveUsageStatusToggle(arg: string, current: boolean): { enabl
 }
 
 // --- Main ---
+
+/**
+ * Whether the status bar (and its refresh hooks) should follow the active
+ * provider. The Ollama Cloud namespace means this is every `ollama-*` id, not
+ * just the canonical `ollama-cloud`. Exported for unit testing.
+ */
+export function isOllamaCloud(ctx: Pick<ExtensionContext, "model">): boolean {
+  return isOllamaProviderId(ctx.model?.provider);
+}
 
 export default async function (pi: ExtensionAPI) {
   pi.registerProvider("ollama-cloud", {
@@ -199,10 +208,6 @@ export default async function (pi: ExtensionAPI) {
       usageTimer = null;
     }
     ctx.ui.setStatus(USAGE_STATUS_KEY, undefined);
-  }
-
-  function isOllamaCloud(ctx: ExtensionContext): boolean {
-    return ctx.model?.provider === "ollama-cloud";
   }
 
   pi.on("model_select", async (_event, ctx) => {

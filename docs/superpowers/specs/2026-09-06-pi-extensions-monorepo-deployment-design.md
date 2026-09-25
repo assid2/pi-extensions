@@ -4,6 +4,24 @@
 - **Status:** Approved in chat (2026-09-06), pending user review of this document
 - **Owner:** satish
 
+## Amendments
+
+- **v1.1.0 — `pi-ollama-cloud` is vendored.** `pi-ollama-cloud` left the unpinned third-party list
+  and joined this repository as a git-subtree fork (`pi-ollama-cloud/`, upstream v0.12.1). The fork
+  is prefix-aware: the `ollama-<label>` namespace is honored by the status bar, `/ollama-cloud-usage`,
+  and the web tools, which resolve the active member's own key with no cross-account fallback;
+  `ollama-cloud` remains the default member. Because the fork is self-pinned it no longer floats —
+  upstream updates are explicit `git subtree pull`s.
+- **v1.1.0 — third-party entries float.** Sections 4 and 5 originally pinned the third-party
+  entries exactly (`npm:...@x.y.z`, `git:github.com/obra/superpowers@v6.3.0`) for full
+  reproducibility. That is no longer the contract. `deployment.json` leaves every non-self entry
+  **unversioned** and `apply.sh` refreshes each one to its **latest release** (`pi update`) on every
+  apply; entries still versioned in settings are unpinned in the same run (`LATEST` / `UNPIN` /
+  `INSTALL-LATEST` actions). The monorepo self-pin stays frozen and the release rule is unchanged,
+  so the repository's own tag is the single fixed point. Read "every entry pinned" below as
+  "self-pinned, third-party at latest" wherever this document describes the stack. Except for this
+  amendment, the document is kept as the original design record.
+
 ## 1. Purpose
 
 Two goals, in order:

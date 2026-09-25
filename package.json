@@ -2,7 +2,7 @@
   "name": "pi-extensions",
   "version": "1.0.0",
   "private": true,
-  "description": "Reproducible full-stack deployment of a curated pi extension set: pi-usage, pi-dynamic-workflows (patched fork), plus pinned third-party packages",
+  "description": "Full-stack deployment of a curated pi extension set: pi-usage, pi-dynamic-workflows (patched fork), plus third-party packages tracked at their latest release",
   "keywords": [
     "pi-package",
     "pi",
@@ -28,6 +28,7 @@
   "pi": {
     "extensions": [
       "pi-usage/extensions/usage/index.ts",
+      "pi-ollama-cloud/index.ts",
       "pi-dynamic-workflows/dist/pi-extension.js",
       "pi-commandcode-cloud/index.ts"
     ],

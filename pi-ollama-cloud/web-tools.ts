@@ -11,9 +11,11 @@
  *
  * API key resolution: each tool's execute() receives an ExtensionContext whose
  * modelRegistry resolves the registered provider's key (runtime/CLI overrides,
- * the registered apiKey: "$OLLAMA_API_KEY" config, and stored auth.json). The
- * OLLAMA_API_KEY env var is a fallback for when the provider is not yet
- * registered at tool-call time. This avoids direct AuthStorage access, which is
+ * the registered apiKey: "$OLLAMA_API_KEY" config, and stored auth.json). When
+ * a non-default `ollama-*` member is the active provider, its own key is used
+ * with no fallback; otherwise resolution targets the canonical `ollama-cloud`
+ * provider (with the OLLAMA_API_KEY env fallback for when it is not yet
+ * registered at tool-call time). This avoids direct AuthStorage access, which is
  * not part of the public pi-coding-agent API on 0.80.8+.
  */
 

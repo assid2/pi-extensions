@@ -12,8 +12,22 @@
  * attribution is exact with no extra bookkeeping.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { UsageConfig } from "../config.ts";
 import type { Account } from "../types.ts";
+
+type RegisteredProvider = NonNullable<ReturnType<ExtensionContext["modelRegistry"]["getProvider"]>>;
+type RefreshContext = Parameters<NonNullable<RegisteredProvider["refreshModels"]>>[0];
+
+/**
+ * Ollama Cloud accounts are a namespace: any `ollama-<label>` provider id is a
+ * local label for the same ollama.com service. The suffix is never sent to the
+ * host and is validated against nothing. `ollama-cloud` is the default member.
+ */
+export function isOllamaProviderId(id: string): boolean {
+  return /^ollama-/.test(id);
+}
 
 export interface ResolvedCredential {
   configured: boolean;
@@ -110,6 +124,114 @@ interface CloneInput {
   specEnv?: string;
 }
 
+interface ProviderClone {
+  name: string;
+  baseUrl?: string;
+  apiKey?: string;
+  api?: string;
+  headers?: Record<string, string>;
+  authHeader?: boolean;
+  models?: unknown[];
+  refreshModels?: (context: RefreshContext) => Promise<unknown>;
+}
+
+/**
+ * Copy the base provider's effective shape (name, baseUrl, models, api,
+ * headers, and catalog refresh) into a provider registration config. `apiKey`
+ * is deliberately NOT copied: the clone resolves its own credential for its
+ * own id from auth.json / env (see resolveCredential).
+ *
+ * The refresh wrapper calls through to the base and returns the base's
+ * refreshed models, so the clone's catalog swaps live; the base's callback
+ * persists the catalog under the clone's own models-store key, which is why
+ * each member gets its own `models-store.json` entry and 4h cooldown.
+ */
+function cloneProviderShape(base: RegisteredProvider, name: string): ProviderClone {
+  const models = base.getModels();
+  const first = models[0];
+  const clone: ProviderClone = {
+    name,
+    baseUrl: base.baseUrl,
+    // Model objects satisfy the config model shape structurally.
+    models: models.length > 0 ? (models as unknown[]) : undefined,
+  };
+  if (first?.api) clone.api = first.api as string;
+  if (base.headers) clone.headers = nonNullHeaders(base.headers);
+  if (base.refreshModels) {
+    const refresh = base.refreshModels.bind(base);
+    clone.refreshModels = async (context: RefreshContext) => {
+      await refresh(context);
+      return base.getModels();
+    };
+  }
+  return clone;
+}
+
+/**
+ * Read the top-level keys of `<agentDir>/auth.json`. Keys are provider ids —
+ * values are credentials and are never read, logged, returned, or hashed.
+ * A missing file is ordinary (no credentials yet); malformed or non-object
+ * content yields one warning and no ids, never a throw.
+ */
+export function loadAuthProviderIds(agentDir: string): { ids: string[]; warning?: string } {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(path.join(agentDir, "auth.json"), "utf8");
+  } catch {
+    return { ids: [] };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return {
+      ids: [],
+      warning: `auth.json: invalid JSON (${(error as Error).message}); ollama-* providers not auto-registered`,
+    };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ids: [], warning: "auth.json: top level must be an object; ollama-* providers not auto-registered" };
+  }
+  return { ids: Object.keys(parsed as Record<string, unknown>) };
+}
+
+/**
+ * Register a clone provider for every credentialed `ollama-*` id that is not
+ * already a provider. Idempotent across session_start (`new`/`fork`/`resume`/
+ * `reload`): an id that already has a provider definition is left alone.
+ */
+export function registerOllamaNamespaceProviders(
+  ctx: ExtensionContext,
+  agentDir: string,
+  warnings: string[],
+): void {
+  const base = ctx.modelRegistry.getProvider("ollama-cloud");
+  if (!base) {
+    warnings.push('ollama providers: base "ollama-cloud" is not registered; ollama-* providers skipped');
+    return;
+  }
+
+  const auth = loadAuthProviderIds(agentDir);
+  if (auth.warning) warnings.push(auth.warning);
+
+  const members = new Set<string>();
+  for (const id of [...auth.ids, ...ctx.modelRegistry.getRegisteredProviderIds()]) {
+    if (id === "ollama-cloud") continue;
+    if (isOllamaProviderId(id)) members.add(id);
+  }
+
+  for (const id of members) {
+    if (ctx.modelRegistry.getProvider(id)) continue;
+    const label = id.slice("ollama-".length);
+    const clone = cloneProviderShape(base, `${base.name || "Ollama Cloud"} (${label})`);
+    try {
+      ctx.modelRegistry.registerProvider(id, clone as never);
+    } catch (error) {
+      warnings.push(`${id}: registration failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 /**
  * Register alias providers for alias accounts. Idempotent and non-destructive:
  * if a provider with the alias id already exists (e.g. the user defined it in
@@ -137,24 +259,7 @@ export function registerAliasProviders(
       continue;
     }
 
-    const models = base.getModels();
-    const first = models[0];
-    const clone: {
-      name: string;
-      baseUrl?: string;
-      apiKey?: string;
-      api?: string;
-      headers?: Record<string, string>;
-      authHeader?: boolean;
-      models?: unknown[];
-    } = {
-      name: `${base.name || account.base} (${account.name})`,
-      baseUrl: base.baseUrl,
-      // Model objects satisfy the config model shape structurally.
-      models: models.length > 0 ? (models as unknown[]) : undefined,
-    };
-    if (first?.api) clone.api = first.api as string;
-    if (base.headers) clone.headers = nonNullHeaders(base.headers);
+    const clone = cloneProviderShape(base, `${base.name || account.base} (${account.name})`);
 
     const spec = config.accounts.find((s) => s.alias === account.id);
     if (spec?.env) {

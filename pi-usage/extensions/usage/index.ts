@@ -20,6 +20,7 @@ import {
   AccountRegistry,
   buildAccounts,
   registerAliasProviders,
+  registerOllamaNamespaceProviders,
   resolveCredential,
 } from "./accounts/registry.ts";
 import { resolveAdapter } from "./adapters/index.ts";
@@ -207,6 +208,8 @@ export default function (pi: ExtensionAPI): void {
 
     registry = buildAccounts(ctx, config, loaded.warnings);
     registerAliasProviders(ctx, registry, config, loaded.warnings);
+    // Any credentialed `ollama-<label>` id becomes a clone of ollama-cloud.
+    registerOllamaNamespaceProviders(ctx, agentDir, loaded.warnings);
     for (const warning of loaded.warnings) console.warn(`[${EXTENSION_ID}] ${warning}`);
 
     // Register the opencode-go provider unless the user already defined one.

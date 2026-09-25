@@ -79,15 +79,34 @@ export function getContextLength(modelInfo: Record<string, unknown>): number {
 }
 
 /**
+ * The Ollama Cloud provider namespace: any `ollama-<label>` id is a local label
+ * for the same ollama.com service. `ollama-cloud` is the default member. The
+ * suffix is never sent to the host and is validated against nothing.
+ */
+export function isOllamaProviderId(id: string | undefined): boolean {
+  return typeof id === "string" && /^ollama-/.test(id);
+}
+
+/**
  * Resolve the Ollama Cloud API key for a tool execution or command.
  *
- * Prefers the canonical provider auth chain (ctx.modelRegistry.getApiKeyForProvider),
- * which honors runtime/CLI key overrides, the registered
- * apiKey: "$OLLAMA_API_KEY" config, and stored auth.json credentials. Falls back
- * to the OLLAMA_API_KEY env var for the case where the provider is not yet
- * registered at call time.
+ * When a non-default `ollama-*` member is the active provider, this returns
+ * exactly that member's key and never substitutes another account's key: an
+ * unresolved member key yields `undefined`, so the caller reports "no key"
+ * instead of silently billing the wrong account.
+ *
+ * When the canonical `ollama-cloud` provider is active (or a non-ollama
+ * provider is active, or there is no active model), this keeps the original
+ * behavior: resolve `ollama-cloud`, falling back to the OLLAMA_API_KEY env var
+ * for the case where that provider is not yet registered at call time (#24).
  */
-export async function getCloudApiKey(ctx: Pick<ExtensionContext, "modelRegistry">): Promise<string | undefined> {
+export async function getCloudApiKey(
+  ctx: Pick<ExtensionContext, "modelRegistry"> & { model?: ExtensionContext["model"] },
+): Promise<string | undefined> {
+  const active = ctx.model?.provider;
+  if (active && isOllamaProviderId(active) && active !== "ollama-cloud") {
+    return ctx.modelRegistry.getApiKeyForProvider(active);
+  }
   return (await ctx.modelRegistry.getApiKeyForProvider("ollama-cloud")) ?? process.env.OLLAMA_API_KEY;
 }
 

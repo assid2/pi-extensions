@@ -24,7 +24,8 @@ request.
      | sort -uV | tail -1
    ```
 
-3. **Bootstrap or update (two-step, always pinned — never install an unpinned spec):**
+3. **Bootstrap or update the repository (two-step, always pinned — never install *this repo*
+   unpinned):**
    - Package absent → `pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<tag>`
    - Package present at a ref older than `<tag>` → same command; it moves the existing clone to
      the new ref and rewrites the pinned entry in settings.
@@ -38,15 +39,18 @@ request.
 
    from the **updated** clone (step 3's result) and show its full output to the user verbatim.
 
-5. **Apply.**
+5. **Apply.** `apply.sh` installs/moves the declared entries and refreshes every unpinned
+   third-party entry to its latest release (`pi update`) — so a run is expected to touch the
+   network and may print `LATEST` / `UNPIN` / `INSTALL-LATEST` actions.
    - Default: `<clone>/deploy/apply.sh` (additive).
    - Only if the user explicitly asks for an exact mirror ("exactly", "mirror", "replace my
      stack"): `<clone>/deploy/apply.sh --prune`.
    - Never prune implicitly. Never apply without having printed the step-4 plan first.
 
 6. **Report.** Relay `apply.sh`'s full output and exit status verbatim — do not summarise it away.
-   `Post-condition: PASS` with exit 0 means the machine now runs exactly the declared stack (plus
-   any reported drift). On any non-zero exit: show the per-entry status table and ask the user how
+   `Post-condition: PASS` with exit 0 means the machine now runs exactly the declared stack — the
+   repository at its pinned tag, every third-party package at the latest release available at that
+   moment (plus any reported drift). On any non-zero exit: show the per-entry status table and ask the user how
    to proceed.
 
 See `reference.md` (this directory) for the reproducibility contract, what the stack contains, and

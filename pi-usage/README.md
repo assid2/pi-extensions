@@ -69,6 +69,24 @@ pi install npm:@assid2/pi-usage   # or: pi install /path/to/pi-usage
   under the alias id. Best-effort — depends on the provider tolerating two
   tokens.
 
+### Ollama Cloud namespace
+
+Any provider id of the form `ollama-<label>` is an **Ollama Cloud account**.
+The suffix is a purely local label: it is never sent to ollama.com, nothing
+validates it against the host, and it only names the `auth.json` key, the
+model-store entry, and the usage attribution. On startup the extension
+registers a clone provider for every `ollama-*` key in `auth.json` (skipping
+ids another package already defined), so each gets the live catalog, the same
+automatic refresh as `ollama-cloud`, and its own quota line in `/usage`:
+
+- `ollama-cloud` — the default member and the clone base.
+- `ollama-assid2`, `ollama-work`, … — extra keys stored with `/login` (or by
+  adding a top-level key to `auth.json`); each is an independent provider and
+  quota line.
+
+These ids need no `usage.json` entry: a credential is the only thing that
+makes one appear.
+
 ### Generic adapters
 
 Attach a usage endpoint to any provider (absolute URL, or a path relative to

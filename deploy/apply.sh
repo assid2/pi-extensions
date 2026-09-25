@@ -2,7 +2,8 @@
 # apply.sh — converge a pi install to the extension stack declared in ../deployment.json.
 #
 # Usage:
-#   apply.sh             additive apply: install/move manifest entries to their pins;
+#   apply.sh             additive apply: install/move manifest entries to their pins and
+#                        refresh unpinned entries to the latest release (`pi update`);
 #                        packages not in the manifest are left alone and reported as drift
 #   apply.sh --dry-run   print the per-entry plan; change nothing; exit 0
 #   apply.sh --check     exit non-zero if the target is not currently converged; print what differs
@@ -12,8 +13,8 @@
 #   - Self-locating: reads ../deployment.json relative to this script (BASH_SOURCE), never cwd.
 #   - Machine-independent: no hardcoded home dir, username, or absolute path. The target
 #     agent dir is PI_CODING_AGENT_DIR (pi's own override) or ~/.pi/agent.
-#   - Converges exclusively through pi's own CLI (pi install / pi remove). It never writes
-#     or rewrites any JSON file, never hand-edits settings, and touches only the `packages`
+#   - Converges exclusively through pi's own CLI (pi install / pi remove / pi update). It never
+#     writes or rewrites any JSON file, never hand-edits settings, and touches only the `packages`
 #     key — never auth.json, models.json, models-store.json, AGENTS.md, or any other file.
 #   - Sequential, one entry at a time; the first failure stops the run with a non-zero exit
 #     and the full per-entry status table.
@@ -220,6 +221,7 @@ const settings = loadSettings().map((s) => parseSpec(typeof s === "string" ? s :
 if (mode === "plan") {
   const matchedSettings = new Set();
   let converged = 1;
+  let unpinnedCount = 0;
 
   const notes = [];
   if (headTag !== manifest.version) {
@@ -255,9 +257,34 @@ if (mode === "plan") {
       if (cur) {
         matchedSettings.add(cur);
         const curPin = cur.pin === null ? "(unpinned)" : cur.pin;
-        if (cur.pin === e.pin) { action = "NOOP"; detail = "already at pin " + (e.pin === null ? "(unpinned)" : e.pin); }
-        else { action = "MOVE"; detail = "move " + curPin + " -> " + (e.pin === null ? "(unpinned)" : e.pin); converged = 0; }
-      } else { action = "INSTALL"; detail = "install " + e.spec; converged = 0; }
+        if (e.pin === null && cur.pin === null) {
+          // Already unpinned: always take whatever upstream publishes latest.
+          unpinnedCount += 1;
+          action = "LATEST";
+          detail = "unpinned in the manifest — apply runs `pi update` to take the latest release";
+        } else if (cur.pin === e.pin) {
+          action = "NOOP";
+          detail = "already at pin " + e.pin;
+        } else if (e.pin === null) {
+          unpinnedCount += 1;
+          action = "UNPIN";
+          detail = "unpin " + curPin + " and take the latest release (install + `pi update`)";
+          converged = 0;
+        } else {
+          action = "MOVE";
+          detail = "move " + curPin + " -> " + e.pin;
+          converged = 0;
+        }
+      } else if (e.pin === null) {
+        unpinnedCount += 1;
+        action = "INSTALL-LATEST";
+        detail = "install " + e.spec + " and take the latest release";
+        converged = 0;
+      } else {
+        action = "INSTALL";
+        detail = "install " + e.spec;
+        converged = 0;
+      }
     }
     lines.push("M\t" + i + "\t" + action + "\t" + e.spec + "\t" + detail);
   });
@@ -272,6 +299,9 @@ if (mode === "plan") {
   });
 
   for (const n of notes) lines.push(n);
+  if (unpinnedCount > 0) {
+    lines.push("N\t" + unpinnedCount + " unpinned entr" + (unpinnedCount === 1 ? "y takes" : "ies take") + " the latest release at apply time (`pi update`); --check verifies structure only, so it cannot see a newer upstream release");
+  }
   lines.push("S\t" + converged);
   process.stdout.write(lines.join("\n") + "\n");
 }
@@ -383,6 +413,32 @@ for i in "${!ACTIONS[@]}"; do
   action="${ACTIONS[$i]}"; spec="${SPECS[$i]}"
   case "$action" in
     NOOP|SATISFIED) continue ;;
+    LATEST)
+      # Unpinned manifest entry already in settings: pi update moves npm to the
+      # latest version and fast-forwards a no-ref git clone to its default branch head.
+      if ! out="$(pi update "$spec" 2>&1)"; then
+        echo "FAILED: pi update $spec" >&2
+        [ -n "$out" ] && echo "$out" | sed 's/^/    /' >&2
+        failed=1; break
+      fi
+      echo "ok: pi update $spec (latest)"
+      ;;
+    UNPIN|INSTALL-LATEST)
+      # Unpinned manifest entry: settle settings, then force the latest release.
+      # (A bare install can resolve within a previously recorded range — the explicit
+      #  update pass is what actually guarantees "latest".)
+      if ! out="$(pi install "$spec" 2>&1)"; then
+        echo "FAILED: pi install $spec" >&2
+        [ -n "$out" ] && echo "$out" | sed 's/^/    /' >&2
+        failed=1; break
+      fi
+      if ! out="$(pi update "$spec" 2>&1)"; then
+        echo "FAILED: pi update $spec" >&2
+        [ -n "$out" ] && echo "$out" | sed 's/^/    /' >&2
+        failed=1; break
+      fi
+      echo "ok: pi install+update $spec (unpinned, latest)"
+      ;;
     INSTALL|MOVE|FIX)
       if [ "$action" = FIX ]; then
         # redundant git package alongside a satisfying dev checkout: remove it

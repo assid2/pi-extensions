@@ -29,6 +29,14 @@ provider's effective shape (name, baseUrl, models). Credentials come from
 truth) or an explicit `env` binding. Because every session message records
 the provider id it used, alias attribution is exact with zero bookkeeping.
 
+Ollama Cloud extends this with a **namespace rule**: every `ollama-<label>`
+provider id is a local label for the same ollama.com service (the suffix is
+never sent to the host). On `session_start` the extension registers a clone of
+`ollama-cloud` — the default member and the clone base — for each `ollama-*`
+key in `auth.json`, giving each its own live catalog, `models-store.json`
+entry, and quota line. Adapter resolution mirrors the rule: any `ollama-*`
+base id maps to the `ollama-cloud` usage adapter.
+
 ### Two usage data sources
 
 - **Provider-side** (external): per-account quota/balance/spend via each

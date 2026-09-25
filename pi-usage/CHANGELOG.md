@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Treat `ollama-*` provider ids as a namespace: every credential-bearing
+  `ollama-*` key in `auth.json` is auto-registered as a clone of `ollama-cloud`
+  (live catalog, own `models-store.json` entry, own quota line), and any
+  `ollama-*` id resolves to the Ollama Cloud usage adapter. `ollama-cloud`
+  remains the default member and clone base.
 - Add the `commandcode-cloud` adapter (Command Code `api.commandcode.ai/alpha/*`):
   `5h` + `Weekly` rolling credit windows, a derived `Monthly` billing-period
   lane, `monthlyCredits`/`purchasedCredits`/`freeCredits` balances, and
