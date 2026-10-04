@@ -117,13 +117,32 @@ pick_tmux_conf() {
 }
 
 # ---------------------------------------------------------------- transforms
-# tmux: replace the three directives in place; append any that are absent.
+# tmux: replace the directives in place; pick a non-clobbering terminal-features index.
+# If an indexed *:RGB already exists, keep its index; otherwise take the lowest free index >= 3
+# (so a user's terminal-features[4] is never overwritten). Duplicate *:RGB entries are collapsed.
+lowest_free_index() { # USED(newline list) -> lowest n >= 3 not in USED
+  local used="$1" n=3
+  while printf '%s\n' "$used" | grep -qx "$n"; do n=$((n + 1)); done
+  printf '%s\n' "$n"
+}
+
+converge_tmux() { # TARGET
+  local target="$1" used rgb_idx use
+  used="$(grep -oE 'terminal-features\[[0-9]+\]' "$target" 2>/dev/null | grep -oE '[0-9]+' | sort -n | uniq || true)"
+  rgb_idx="$(grep -E '^[[:space:]]*(set|set-option)[[:space:]].*terminal-features\[[0-9]+\].*RGB' "$target" 2>/dev/null | grep -oE '\[[0-9]+\]' | head -1 | tr -d '[]' || true)"
+  if [ -n "$rgb_idx" ]; then use="$rgb_idx"; else use="$(lowest_free_index "$used")"; fi
+  converge_cmd "$target" "$target" awk -v idx="$use" "$TMUX_AWK"
+}
+
 TMUX_AWK='
 BEGIN{dt=0;tf=0;ce=0;mk=0}
 {
  if($0 ~ /pi-extensions: 24-bit truecolor/) mk=1
  if(!dt && $0 ~ /^[[:space:]]*(set|set-option)[[:space:]].*default-terminal([[:space:]]|$)/){print "set -g default-terminal \"tmux-direct\"";dt=1;next}
- if(!tf && $0 ~ /^[[:space:]]*(set|set-option)[[:space:]].*terminal-features.*RGB/){print "set -s terminal-features[3] \"*:RGB\"";tf=1;next}
+ if($0 ~ /^[[:space:]]*(set|set-option)[[:space:]].*terminal-features.*RGB/){
+   if(!tf){print "set -s terminal-features[" idx "] \"*:RGB\"";tf=1}
+   next
+ }
  if(!ce && $0 ~ /^[[:space:]]*#?[[:space:]]*(set|set-option|set-environment|setenv)[[:space:]].*COLORTERM/){print "set-environment -g COLORTERM truecolor";ce=1;next}
  print
 }
@@ -131,7 +150,7 @@ END{
  if(!dt||!tf||!ce){
    if(!mk) print "# pi-extensions: 24-bit truecolor"
    if(!dt) print "set -g default-terminal \"tmux-direct\""
-   if(!tf) print "set -s terminal-features[3] \"*:RGB\""
+   if(!tf) print "set -s terminal-features[" idx "] \"*:RGB\""
    if(!ce) print "set-environment -g COLORTERM truecolor"
  }
 }'
@@ -156,7 +175,7 @@ process.stdin.on("end", () => {
 converge_all() {
   # item 2 — tmux
   if command -v tmux >/dev/null 2>&1; then
-    converge_cmd "$(pick_tmux_conf)" "$(pick_tmux_conf)" awk "$TMUX_AWK"
+    converge_tmux "$(pick_tmux_conf)"
   else
     say "[SKIP]    tmux not installed"
   fi

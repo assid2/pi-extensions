@@ -81,7 +81,7 @@ Each directive is matched as a whole line and rewritten; an absent directive is 
 | Desired line | Match / replacement rule |
 |---|---|
 | `set -g default-terminal "tmux-direct"` | replace any `set[-option] … [-g] default-terminal …` line (report old→new); append if absent |
-| `set -s terminal-features[3] "*:RGB"` | replace any `terminal-features` line mentioning `RGB` with the indexed form (the file currently holds one append line); append if absent |
+| `set -s terminal-features[N] "*:RGB"` | collapse every active `terminal-features … RGB` line to a single entry; keep an existing `*:RGB` entry's index, else take the lowest free index ≥ 3 (never clobber a user's other `terminal-features[N]`, e.g. `[4] xterm*:hyperlinks`); append if absent |
 | `set-environment -g COLORTERM truecolor` | replace any `set-environment … COLORTERM …` line; append if absent |
 
 ### 4.3 shell convergence
@@ -145,8 +145,15 @@ every mode:
   *client's* emoji font and shows grey on clients without a colour-emoji font — the "relay looks
   down" symptom that truecolor cannot fix. The script resolves `remote-pi/dist/ui/footer.js` from
   `pi list` (fallbacks: a package scan, `$REMOTE_PI_FOOTER`), keeps a pristine `.orig`, and rewrites
-  the emoji to an SGR-coloured `U+25CF` (one cell). Because it edits a package install, `--check`
-  reports drift after any remote-pi update and every apply re-patches it.
+  the emoji to an SGR-coloured `U+25CF` (one cell). The patch is anchored (it matches the whole
+  `if (state.relayOn) { … setStatus … }` block) and marker-based (`pi-extensions-glyph-patch v1`),
+  runs `node --check` on the result so a corrupt patch fails at apply time, and hard-fails with a
+  "patch by hand" message when upstream changes the block. `deployment.json` records
+  `remotePiGlyphPatch.verifiedAgainst` and `--check` warns on a version mismatch. target resolution
+  is dynamic: `$REMOTE_PI_FOOTER`, then the path `pi list` reports, then a scan — never hardcoded.
+  Known-remaining, same unstyled-emoji class but not state indicators: `K_SESSION`'s 📡 and
+  `K_PEER`'s 📱. Because it edits a package install, `--check` reports drift after any remote-pi
+  update and every apply re-patches it.
 - **`check-pi-color.sh` — diagnostic.** Prints `TERM` / `COLORTERM`, the tmux client identity and
   features, `tput colors`, the `settings.json` `terminal.trueColor` value, the glyph patch state,
   and pi-tui's own `detectCapabilities` when resolvable. Report-only; never gates.

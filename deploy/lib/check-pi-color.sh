@@ -1,44 +1,71 @@
 #!/usr/bin/env bash
-# check-pi-color.sh — report the effective 24-bit colour path for pi on this host.
+# check-pi-color.sh — report the colour mode Pi resolves in THIS pane, using Pi's own detector
+# (pi-tui detectCapabilities / getTerminalColorMode) rather than guessing from the environment.
 #
-# A diagnostic, not a gate: it prints what pi and the terminal chain will actually use, so a
-# rollout can self-verify instead of guessing from the environment. Exits 0.
+#   check-pi-color.sh                   probe the current environment
+#   check-pi-color.sh --with-colorterm  same, with COLORTERM=truecolor injected
 #
-# Usage: check-pi-color.sh
+# Report only; exits 0. Resolution of pi-tui: $PI_TUI, then a scan of the agent dir, the pi-node
+# store, and ~/.nvm.
 
 set -uo pipefail
 
-say() { printf '%s\n' "$*"; }
-
-say "TERM=${TERM:-<unset>}  COLORTERM=${COLORTERM:-<unset>}"
-
-if command -v tmux >/dev/null 2>&1 && [ -n "${TMUX:-}" ]; then
-  say "tmux client: $(tmux display-message -p '#{client_termname}' 2>/dev/null || echo '?')"
-  say "tmux client features: $(tmux display-message -p '#{client_termfeatures}' 2>/dev/null || echo '?')"
-  say "tmux default-terminal: $(tmux show -g default-terminal 2>/dev/null || echo '?')"
-  say "tmux COLORTERM: $(tmux show-environment -g COLORTERM 2>/dev/null || echo '<unset>')"
+PI_TUI="${PI_TUI:-}"
+if [ -z "$PI_TUI" ]; then
+  PI_TUI="$(find "$HOME/.pi/agent" "$HOME/.local/share/pi-node" "$HOME/.nvm" \
+    -type d -path '*@earendil-works/pi-tui' 2>/dev/null | head -1 || true)"
 fi
 
-say "tput colors: $(tput colors 2>/dev/null || echo '?')"
+echo "TERM=${TERM:-<unset>}  COLORTERM=${COLORTERM:-<unset>}  TMUX=${TMUX:+set}"
+if command -v tmux >/dev/null 2>&1 && [ -n "${TMUX:-}" ]; then
+  echo "tmux client: $(tmux display-message -p '#{client_termname}' 2>/dev/null || echo '?')"
+  echo "tmux client features: $(tmux display-message -p '#{client_termfeatures}' 2>/dev/null || echo '?')"
+  echo "tmux default-terminal: $(tmux show -g default-terminal 2>/dev/null || echo '?')"
+  echo "tmux COLORTERM: $(tmux show-environment -g COLORTERM 2>/dev/null || echo '<unset>')"
+fi
 
 SETTINGS="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json"
 if [ -f "$SETTINGS" ]; then
-  say "settings terminal.trueColor: $(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.terminal?.trueColor))}catch(e){process.stdout.write("?")}' "$SETTINGS" 2>/dev/null || echo '?')"
+  echo "settings terminal.trueColor: $(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.terminal?.trueColor))}catch(e){process.stdout.write("?")}' "$SETTINGS" 2>/dev/null || echo '?')"
 fi
 
 FOOTER="$(find "$HOME/.pi/agent" "$HOME/.local/share/pi-node" -type f -path '*/remote-pi/dist/ui/footer.js' 2>/dev/null | head -1 || true)"
 if [ -n "$FOOTER" ]; then
-  if grep -qP '\x{1F7E2}|\x{1F7E1}' "$FOOTER" 2>/dev/null; then
-    say "remote-pi relay glyph: UNPATCHED (emoji present — will show grey on clients without a colour-emoji font)"
+  if grep -qF 'pi-extensions-glyph-patch' "$FOOTER" 2>/dev/null; then
+    echo "remote-pi relay glyph: patched"
+  elif grep -qP '\x{1F7E2}|\x{1F7E1}' "$FOOTER" 2>/dev/null; then
+    echo "remote-pi relay glyph: UNPATCHED (emoji present — grey on clients without a colour-emoji font)"
   else
-    say "remote-pi relay glyph: patched"
+    echo "remote-pi relay glyph: unknown (no marker, no emoji — review by hand)"
   fi
 fi
 
-# pi's own detector, if it can be resolved and loaded.
-PT="$(find "$HOME/.pi/agent" "$HOME/.local/share/pi-node" -type f -path '*pi-tui/dist/index.js' 2>/dev/null | head -1 || true)"
-if [ -n "$PT" ]; then
-  node -e 'try{const m=require(process.argv[1]); if(typeof m.detectCapabilities==="function"){process.stdout.write("pi-tui detectCapabilities: "+JSON.stringify(m.detectCapabilities())+"\n")}}catch(e){process.stdout.write("pi-tui probe: unavailable ("+e.code||e.message+")"+"\n")}' "$PT" 2>/dev/null || true
+if [ -n "$PI_TUI" ] && [ -f "$PI_TUI/dist/terminal-image.js" ]; then
+  PROBE="$(mktemp "${TMPDIR:-/tmp}/pi-color-probe.XXXXXX.mjs")"
+  cat > "$PROBE" <<'NODE'
+const m = await import(globalThis.process.env.PI_TUI + '/dist/terminal-image.js');
+const c = m.detectCapabilities();
+const mode = typeof m.getTerminalColorMode === 'function'
+  ? m.getTerminalColorMode(c)
+  : (c && c.trueColor ? 'truecolor' : 'no-truecolor');
+console.log(JSON.stringify({ mode, ...c }));
+NODE
+  export PI_TUI
+  if [ "${1:-}" = "--with-colorterm" ]; then
+    printf 'with COLORTERM=truecolor : '
+    COLORTERM=truecolor node "$PROBE" 2>/dev/null || echo 'probe failed'
+  else
+    printf 'as Pi detects it now     : '
+    node "$PROBE" 2>/dev/null || echo 'probe failed'
+    echo
+    echo "Note: this reads the environment only. A terminal.trueColor setting in"
+    echo "settings.json overrides this detection inside Pi, and is applied at Pi"
+    echo "startup — so 'mode: 256color' here does not necessarily mean Pi is drawing"
+    echo "in 256 colours."
+  fi
+  rm -f "$PROBE"
+else
+  echo "pi-tui detector not found (set PI_TUI) — reporting the environment only"
 fi
 
 exit 0

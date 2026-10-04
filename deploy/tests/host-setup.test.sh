@@ -157,19 +157,52 @@ test_skips_without_tmux() {
   contains "$h/.tmux.conf" 'tmux-256color' || fail "tmux.conf touched without tmux"
 }
 
+test_tf_existing_index_kept() {
+  echo "T22 existing terminal-features[3] *:RGB + [4] hyperlinks -> no-op"
+  local h; h="$(new_home)"
+  printf 'set -s terminal-features[3] "*:RGB"\nset -s terminal-features[4] "xterm*:hyperlinks"\nset -g default-terminal "tmux-direct"\nset-environment -g COLORTERM truecolor\n' > "$h/.tmux.conf"
+  local before; before="$(cksum "$h/.tmux.conf")"
+  run "$h" >/dev/null
+  [ "$before" = "$(cksum "$h/.tmux.conf")" ] || fail "changed an already-converged config"
+  contains "$h/.tmux.conf" 'terminal-features[4] "xterm*:hyperlinks"' || fail "hyperlinks entry lost"
+}
+test_tf_duplicates_collapsed() {
+  echo "T23 duplicate *:RGB entries collapse and --check flags them"
+  local h; h="$(new_home)"
+  printf 'set -s terminal-features[3] "*:RGB"\nset -s terminal-features[4] "*:RGB"\n' > "$h/.tmux.conf"
+  if run "$h" --check >/dev/null 2>&1; then fail "--check passed with duplicates"; fi
+  run "$h" >/dev/null
+  [ "$(grep -cF '*:RGB' "$h/.tmux.conf")" -eq 1 ] || fail "duplicates not collapsed"
+}
+test_tf_lowest_free_index() {
+  echo "T24 picks lowest free index >=3 when 3 is a non-RGB entry"
+  local h; h="$(new_home)"
+  printf 'set -s terminal-features[3] "xterm*:hyperlinks"\nset -as terminal-features ",*:RGB"\n' > "$h/.tmux.conf"
+  run "$h" >/dev/null
+  contains "$h/.tmux.conf" 'set -s terminal-features[4] "*:RGB"' || fail "did not pick index 4"
+  contains "$h/.tmux.conf" 'terminal-features[3] "xterm*:hyperlinks"' || fail "clobbered index 3"
+}
+
 # --- item 4: remote-pi relay glyph -----------------------------------------
 test_glyph_patch() {
-  echo "T20 remote-pi relay glyph: check fails -> apply -> check passes -> revert"
+  echo "T20 relay glyph: check fails -> apply -> check passes -> revert"
   local h; h="$(new_home)"; mkdir -p "$h/rp/dist/ui"
-  printf 'ctx.ui.setStatus(K_RELAY, state.hasPairings ? "\xf0\x9f\x9f\xa2 relay" : "\xf0\x9f\x9f\xa1 relay waiting");\n' > "$h/rp/dist/ui/footer.js"
-  local lib="$HERE/../lib/fix-remote-pi-glyph.sh"
-  if REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$lib" --check >/dev/null 2>&1; then fail "--check passed unpatched"; fi
-  REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$lib" --apply >/dev/null || fail "apply failed"
-  REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$lib" --check >/dev/null || fail "--check failed patched"
-  [ -f "$h/rp/dist/ui/footer.js.orig" ] || fail "no pristine .orig copy"
-  grep -qF 'x1b[32m' "$h/rp/dist/ui/footer.js" || fail "green SGR not inserted"
-  REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$lib" --revert >/dev/null
-  cmp -s "$h/rp/dist/ui/footer.js" "$h/rp/dist/ui/footer.js.orig" || fail "revert did not restore"
+  printf 'const K_RELAY = "remote-pi:relay";\nfunction render(state, ctx) {\n    if (state.relayOn) {\n        ctx.ui.setStatus(K_RELAY, state.hasPairings ? "\xf0\x9f\x9f\xa2 relay" : "\xf0\x9f\x9f\xa1 relay waiting for pairing");\n    } else {\n        ctx.ui.setStatus(K_RELAY, undefined);\n    }\n}\n' > "$h/rp/dist/ui/footer.js"
+  local lib="$HERE/../lib/fix-remote-pi-glyph.sh" f="$h/rp/dist/ui/footer.js"
+  if REMOTE_PI_FOOTER="$f" bash "$lib" --check >/dev/null 2>&1; then fail "--check passed unpatched"; fi
+  REMOTE_PI_FOOTER="$f" bash "$lib" --apply >/dev/null || fail "apply failed"
+  REMOTE_PI_FOOTER="$f" bash "$lib" --check >/dev/null || fail "--check failed patched"
+  [ -f "$f.orig" ] || fail "no pristine .orig copy"
+  contains "$f" 'pi-extensions-glyph-patch' || fail "marker not written"
+  contains "$f" '38;2;166;227;161' || fail "truecolor green not written"
+  node --check "$f" 2>/dev/null || fail "patched footer.js fails node --check"
+  REMOTE_PI_FOOTER="$f" bash "$lib" --revert >/dev/null
+  cmp -s "$f" "$f.orig" || fail "revert did not restore"
+}
+test_glyph_hard_fail() {
+  echo "T25 relay glyph hard-fails when the upstream block is missing"
+  local h; h="$(new_home)"; mkdir -p "$h/rp/dist/ui"; printf 'export const x = 1;\n' > "$h/rp/dist/ui/footer.js"
+  if REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$HERE/../lib/fix-remote-pi-glyph.sh" --apply >/dev/null 2>&1; then fail "apply did not hard-fail on a missing block"; fi
 }
 test_diag_runs() {
   echo "T21 check-pi-color diagnostic runs and exits 0"
@@ -177,7 +210,11 @@ test_diag_runs() {
 }
 
 test_glyph_patch
+test_glyph_hard_fail
 test_diag_runs
+test_tf_existing_index_kept
+test_tf_duplicates_collapsed
+test_tf_lowest_free_index
 test_default_terminal_replaced
 test_rgb_and_colorterm
 test_conflicting_value_replaced

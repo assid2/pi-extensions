@@ -10,7 +10,7 @@
     "settings": { "terminal.trueColor": true },
     "tmux": { "defaultTerminal": "tmux-direct", "rgb": true, "colorterm": "truecolor" },
     "shellRc": { "colorGate": "xterm-color|*-256color|*-direct" },
-    "remotePiGlyphPatch": { "version": 1 }
+    "remotePiGlyphPatch": { "version": 1, "verifiedAgainst": "0.7.0" }
   },
   "retired": [
     "npm:pi-ollama-cloud"
