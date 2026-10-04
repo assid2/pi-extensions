@@ -72,7 +72,23 @@ request.
      stack"): `<clone>/deploy/apply.sh --prune`.
    - Never prune implicitly. Never apply without having printed the step-4 plan first.
 
-6. **Report.** Relay `apply.sh`'s full output and exit status verbatim — do not summarise it away.
+6. **Converge the host terminal (full 24-bit colour).** `apply.sh` cannot carry this — it is
+   contract-bound to the `packages` key — so `deploy/host-setup.sh` owns it. Run
+   `<clone>/deploy/host-setup.sh --dry-run`, show its output verbatim, then run
+   `<clone>/deploy/host-setup.sh` and relay the result. It edits, in place and idempotently:
+   - `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json` — merges `terminal.trueColor: true`;
+   - the tmux config tmux reads (`~/.tmux.conf` or the XDG path) — `default-terminal "tmux-direct"`,
+     `terminal-features[3] "*:RGB"`, `set-environment -g COLORTERM truecolor`;
+   - `~/.bashrc` / `~/.zshrc` — extends the stock colour gate to accept `*-direct`;
+   - the remote-pi footer relay glyph (delegated to `deploy/lib/`, guarded against the emoji that
+     renders grey on clients without a colour-emoji font).
+
+   Every file it touches is backed up once as `<file>.pi-extensions.bak`; it never uses sudo, never
+   writes `/etc`. Always tell the user that tmux fixes land on **new** sessions only
+   (`default-terminal` and `COLORTERM` are read at pane creation) and that the `settings.json`
+   override needs a **pi restart** — do **not** kill the tmux server or restart pi for them.
+
+7. **Report.** Relay `apply.sh`'s full output and exit status verbatim — do not summarise it away.
    `Post-condition: PASS` with exit 0 means the machine now runs exactly the declared stack — the
    repository at its pinned tag, every third-party package at the latest release available at that
    moment (plus any reported drift). On any non-zero exit: show the per-entry status table and ask the user how

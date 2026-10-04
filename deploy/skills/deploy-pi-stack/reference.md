@@ -64,6 +64,31 @@ different third-party versions; that is by design.
   `git`/`node` present; `deployment.json` parses; the release-rule check; the clone contains a
   root `package.json` and every path its `pi` manifest declares.
 
+## Host terminal setup (`host-setup.sh`)
+
+`apply.sh` is contract-bound to the `packages` key, but a correct 24-bit render also needs host
+state. That ships as a sibling stage, `deploy/host-setup.sh`, which the `deploy-pi-stack` skill runs
+right after `apply.sh`. It is idempotent and edits in place:
+
+| Item | Target | Change |
+|---|---|---|
+| pi palette | `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json` | merge `terminal.trueColor = true` (semantic; every other key preserved) |
+| tmux | first existing of `~/.tmux.conf`, `$XDG_CONFIG_HOME/tmux/tmux.conf`, `~/.config/tmux/tmux.conf` | `set -g default-terminal "tmux-direct"`, `set -s terminal-features[3] "*:RGB"`, `set-environment -g COLORTERM truecolor` |
+| shell prompt | `~/.bashrc`, `~/.zshrc` (if present) | colour gate `xterm-color|*-256color)` gains `|*-direct` |
+| relay dot | `deploy/lib/fix-remote-pi-glyph.sh` | replace remote-pi's emoji relay glyph with an SGR-coloured `●` (1 cell) |
+
+Guarantees: every touched file is backed up once as `<file>.pi-extensions.bak`; writes are atomic;
+never `sudo`; never `/etc`; `--dry-run` changes nothing; `--check` exits non-zero on drift
+(including the glyph patch); `--revert` restores the backups. The glyph patch lives inside a
+package install, so a remote-pi update silently reverts it — `--check` reports that and every
+apply re-applies it. `deploy/lib/check-pi-color.sh` prints the effective colour path for
+self-verification.
+
+**Restart matrix.** `terminal-features` and the shell gate apply immediately / next shell; tmux
+`default-terminal` and `COLORTERM` apply to **new panes**; `terminal.trueColor` and the relay patch
+need a **pi restart**. Never `tmux kill-server` (it kills running pi agents); never restart pi
+without telling the user.
+
 ## Prerequisites on a fresh machine
 
 - pi is already installed (this deployment converges the extension stack; it does not install or

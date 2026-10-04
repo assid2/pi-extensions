@@ -25,6 +25,7 @@ are deliberately unpinned and always float to their latest release**.
 | [`pi-ollama-cloud/`](pi-ollama-cloud/) | Patched fork of `pi-ollama-cloud` (upstream `fgrehm/pi-ollama-cloud`, MIT), merged with upstream v0.12.1. The patch makes the package prefix-aware: its status bar, `/ollama-cloud-usage`, and web tools follow **any** active `ollama-*` provider and use that member's own key (TypeScript source, loaded directly) |
 | [`deployment.json`](deployment.json) | The stack manifest: the repository's own self-pin plus the third-party packages to install. Third-party entries are **unversioned** — `apply.sh` takes their latest release on every apply. Portable — no local paths |
 | [`deploy/apply.sh`](deploy/apply.sh) | Idempotent converger: brings any pi install in line with `deployment.json` (`--dry-run`, `--check` for CI, `--prune` for an exact mirror) |
+| [`deploy/host-setup.sh`](deploy/host-setup.sh) | Host terminal converger: 24-bit colour for pi + tmux (`terminal.trueColor`, `tmux-direct`, `COLORTERM`, shell colour gate, remote-pi relay glyph) — in-place, idempotent, backed up, `--dry-run`/`--check`/`--revert` |
 | [`pi-commandcode-cloud/`](pi-commandcode-cloud/) | `@assid2/pi-commandcode-cloud` — Command Code model provider (OpenAI/Anthropic-compatible) with `/login`, an opt-in usage footer, and a `pi-usage` adapter (TypeScript source, loaded directly) |
 | [`deploy/skills/deploy-pi-stack/`](deploy/skills/deploy-pi-stack/) | The skill that lets you *ask your pi* to run the deployment (`SKILL.md` + `reference.md`) |
 
@@ -82,6 +83,13 @@ $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 - It converges only through pi's own CLI (`pi install` / `pi remove` / `pi update`), touches only the
   `packages` key, and never opens, rewrites, or reorders `auth.json`, model/provider config,
   `AGENTS.md`, or any other file.
+- **Host terminal setup is a separate stage.** `deploy/host-setup.sh` — run by the deploy skill
+  right after `apply.sh` — converges the 24-bit-colour pieces `apply.sh` cannot own: it merges
+  `terminal.trueColor` into `settings.json`, sets `tmux-direct` + `*:RGB` + `COLORTERM` in the tmux
+  config, extends the `~/.bashrc` / `~/.zshrc` colour gate to `*-direct`, and patches remote-pi's
+  relay glyph. It edits in place, backs up each file once (`.pi-extensions.bak`), never uses sudo,
+  and has its own `--dry-run` / `--check` / `--revert`. tmux changes land on a new session and the
+  settings override needs a pi restart — it never kills the tmux server for you.
 - **Security:** pi packages run with full system access. Only install stacks you trust.
 
 ## Bringing a machine up to the current deployment
