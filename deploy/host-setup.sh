@@ -135,15 +135,27 @@ converge_tmux() { # TARGET
 }
 
 TMUX_AWK='
+function trim(s){ sub(/[ \t]+$/, "", s); return s }
+function bare(s){ sub(/[ \t]*#.*$/, "", s); return trim(s) }
 BEGIN{dt=0;tf=0;ce=0;mk=0}
 {
  if($0 ~ /pi-extensions: 24-bit truecolor/) mk=1
- if(!dt && $0 ~ /^[[:space:]]*(set|set-option)[[:space:]].*default-terminal([[:space:]]|$)/){print "set -g default-terminal \"tmux-direct\"";dt=1;next}
+ if(!dt && $0 ~ /^[[:space:]]*(set|set-option)[[:space:]].*default-terminal([[:space:]]|$)/){
+   if(bare($0) == "set -g default-terminal \"tmux-direct\"") print $0; else print "set -g default-terminal \"tmux-direct\""
+   dt=1;next
+ }
  if($0 ~ /^[[:space:]]*(set|set-option)[[:space:]].*terminal-features.*RGB/){
-   if(!tf){print "set -s terminal-features[" idx "] \"*:RGB\"";tf=1}
+   if(!tf){
+     want="set -s terminal-features[" idx "] \"*:RGB\""
+     if(bare($0) == want) print $0; else print want
+     tf=1
+   }
    next
  }
- if(!ce && $0 ~ /^[[:space:]]*#?[[:space:]]*(set|set-option|set-environment|setenv)[[:space:]].*COLORTERM/){print "set-environment -g COLORTERM truecolor";ce=1;next}
+ if(!ce && $0 ~ /^[[:space:]]*#?[[:space:]]*(set|set-option|set-environment|setenv)[[:space:]].*COLORTERM/){
+   if(bare($0) == "set-environment -g COLORTERM truecolor") print $0; else print "set-environment -g COLORTERM truecolor"
+   ce=1;next
+ }
  print
 }
 END{

@@ -47,6 +47,10 @@ request.
    > `pi-commandcode-cloud` and `pi-ollama-cloud` are provided by this repository itself
    > (declared in the root `package.json` `pi.extensions`), so the repo update in this step is
    > what installs them. They are not separate manifest packages.
+   >
+   > The "always pinned" rule above applies to the monorepo self-entry only. The manifest's
+   > third-party entries are intentionally unversioned and float to their latest release on every
+   > apply (see `reference.md`); a deploy to a pinned tag will report `UNPIN`/`LATEST` for them.
 
 4. **Show the plan first — always, before any change.** Run
 

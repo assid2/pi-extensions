@@ -183,6 +183,16 @@ test_tf_lowest_free_index() {
   contains "$h/.tmux.conf" 'terminal-features[3] "xterm*:hyperlinks"' || fail "clobbered index 3"
 }
 
+test_tmux_preserves_inline_comment() {
+  echo "T27 a canonical directive with a trailing inline comment is left byte-identical"
+  local h; h="$(new_home)"
+  printf 'set -g default-terminal "tmux-direct"   # truecolour passthrough\nset -s terminal-features[3] "*:RGB"            # and -as piled up copies\nset-environment -g COLORTERM truecolor  # env\n' > "$h/.tmux.conf"
+  local before; before="$(cksum "$h/.tmux.conf")"
+  run "$h" >/dev/null
+  [ "$before" = "$(cksum "$h/.tmux.conf")" ] || fail "stripped an inline comment from a converged directive"
+  run "$h" --check >/dev/null || fail "--check not converged for a commented canonical config"
+}
+
 # --- item 4: remote-pi relay glyph -----------------------------------------
 test_glyph_patch() {
   echo "T20 relay glyph: check fails -> apply -> check passes -> revert"
@@ -225,6 +235,7 @@ test_diag_runs
 test_tf_existing_index_kept
 test_tf_duplicates_collapsed
 test_tf_lowest_free_index
+test_tmux_preserves_inline_comment
 test_default_terminal_replaced
 test_rgb_and_colorterm
 test_conflicting_value_replaced
