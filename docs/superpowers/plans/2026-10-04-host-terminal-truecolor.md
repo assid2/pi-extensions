@@ -10,6 +10,16 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-04-host-terminal-truecolor-design.md`
 
+## Implementation status (2026-10-04)
+
+Implemented, tested, and committed in `ba96f64`: `deploy/host-setup.sh` (items 1–3 + the pi-settings
+merge), `deploy/lib/fix-remote-pi-glyph.sh` (item 4), `deploy/lib/check-pi-color.sh` (item 5),
+`deploy/tests/host-setup.test.sh` (21 checks, all passing), and integration into `SKILL.md`,
+`reference.md`, `README.md`, `deployment.json` (`hostSetup`), and `dev/setup-dev.sh`. Rolled out on
+the dev machine; `host-setup.sh --check` converges and a new tmux server yields
+`TERM=tmux-direct` / `COLORTERM=truecolor`. The task breakdown below is the original plan; the
+settings item landed as Task 4, and items 4–5 as the delegated `deploy/lib/` stages.
+
 ## Global Constraints
 
 - Never use `sudo`; never write `/etc` or any path outside the two targets below.

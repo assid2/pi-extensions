@@ -135,6 +135,22 @@ replace apply as for the dotfiles.
   `TERM`; the change applies to newly created sessions** (tmux reads its config once at server
   start, and `default-terminal` is fixed at session creation).
 
+### 4.7 Delegated stages
+
+Two host concerns ship as standalone scripts under `deploy/lib/`, invoked by `host-setup.sh` for
+every mode:
+
+- **`fix-remote-pi-glyph.sh` — remote-pi relay glyph.** Upstream renders the relay dot with the bare
+  emoji `U+1F7E2` / `U+1F7E1`; pi passes status text through unstyled, so the colour comes from the
+  *client's* emoji font and shows grey on clients without a colour-emoji font — the "relay looks
+  down" symptom that truecolor cannot fix. The script resolves `remote-pi/dist/ui/footer.js` from
+  `pi list` (fallbacks: a package scan, `$REMOTE_PI_FOOTER`), keeps a pristine `.orig`, and rewrites
+  the emoji to an SGR-coloured `U+25CF` (one cell). Because it edits a package install, `--check`
+  reports drift after any remote-pi update and every apply re-patches it.
+- **`check-pi-color.sh` — diagnostic.** Prints `TERM` / `COLORTERM`, the tmux client identity and
+  features, `tput colors`, the `settings.json` `terminal.trueColor` value, the glyph patch state,
+  and pi-tui's own `detectCapabilities` when resolvable. Report-only; never gates.
+
 ## 5. Integration
 
 - **`deploy/skills/deploy-pi-stack/SKILL.md`** — a new step after `apply.sh`: run
@@ -145,8 +161,12 @@ replace apply as for the dotfiles.
 - **`README.md`** — extend "What it does — and what it never does": `apply.sh` still touches only
   the `packages` key; `host-setup.sh` is the separate, in-place dotfile step, with backup and
   `--check`/`--dry-run`.
-- **`dev/setup-dev.sh`** — invoke `deploy/host-setup.sh` so the dev machine has parity.
-- **`deployment.json`** — unchanged.
+- **`dev/setup-dev.sh`** — invoke `deploy/host-setup.sh` so the dev machine has parity (the file
+  is currently untracked in git, so it is edited locally only).
+- **`deployment.json`** — a top-level `hostSetup` block declares the tweaks machine-readably
+  (`settings`, `tmux`, `shellRc`, `remotePiGlyphPatch`) so `--check` can report drift without a
+  human diffing hosts. `apply.sh`'s planner reads only `version`/`packages`/`retired`, so the extra
+  key does not affect it.
 
 ## 6. Verification
 
@@ -169,12 +189,17 @@ replace apply as for the dotfiles.
    `"terminal": { "trueColor": true }` with all other keys intact; a file already carrying
    `trueColor: true` is left byte-identical; malformed JSON is warned about and untouched.
 
+8. **relay glyph + live session:** after apply, a **new** tmux server started against the updated
+   config reports `TERM=tmux-direct` and `COLORTERM=truecolor` in a new pane, and
+   `remote-pi/dist/ui/footer.js` contains the SGR-coloured `●` (no `U+1F7E2`/`U+1F7E1`); `--check`
+   fails again if the emoji return.
+
 ## 7. Out of scope
 
 - `/etc/tmux.conf` (root, and shadowed by per-user config).
-- Shells other than bash. `zsh` and others have no stock color gate to extend; a future change can
-  add per-shell handlers rather than guess.
+- Shells beyond bash and zsh: other rc files have no stock gate to extend; a future change can add
+  per-shell handlers rather than guess.
 - Non-tmux terminals: `COLORTERM` outside tmux is set by the terminal emulator, not by us.
-- Converging any non-package pi configuration other than the single `terminal.trueColor` override
-  in §4.4 — AGENTS.md, models, themes, prompts remain out of scope per the monorepo-deployment
-  design.
+- Converging other pi configuration (AGENTS.md, models, themes, prompts). Only the terminal
+  environment is in scope: the `terminal.trueColor` override (§4.4), the tmux and shell settings
+  (§4.2–4.3), and the remote-pi relay glyph (§4.7).
