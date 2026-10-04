@@ -15,6 +15,10 @@ Today that setup lives only in satish's hand-edited `~/.tmux.conf` and `~/.bashr
 makes it part of **every install/upgrade of the stack**, so any machine that runs the deployment
 converges to a correct 24-bit terminal environment for the invoking user.
 
+It also removes the remaining ambiguity on pi's side: pi auto-detects true-color support
+(`terminal.trueColor` defaults to `"auto"`), and the deployment pins it to `true` so pi renders
+24-bit even where detection is uncertain (inside tmux, over SSH, in IDE terminals).
+
 This is the first non-package convergence the deployment performs. Section 7 of the
 monorepo-deployment design deliberately scoped v1 to `packages`-only; this document extends that
 scope for the terminal environment specifically, without disturbing `apply.sh`'s contract.
@@ -48,6 +52,11 @@ scope for the terminal environment specifically, without disturbing `apply.sh`'s
   would be shadowed by the user's own `~/.tmux.conf` anyway. The script targets the first config
   tmux actually reads for the invoking user. "System-wide" here means "every machine that runs
   the stack."
+- **One pi settings key moves into `host-setup.sh`.** `terminal.trueColor = true` is the sole
+  non-package pi setting the deployment converges. It cannot go in `apply.sh`, whose contract is
+  to touch only the settings `packages` key; there is no scriptable `pi config set` (the `pi config`
+  TUI is interactive). `host-setup.sh` therefore also merges this one key into the global
+  `settings.json`, with the same backup/atomic/idempotent discipline as the dotfiles.
 - **`deployment.json` is unchanged.** The script ships inside the repository, so it versions with
   the monorepo tag like the rest of the deployment machinery.
 
@@ -62,6 +71,7 @@ It converges the invoking user's terminal environment and reports every change.
 |---|---|
 | tmux config | first existing of `$HOME/.tmux.conf`, `${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf`, `$HOME/.config/tmux/tmux.conf`; if none exists and tmux is installed, `$HOME/.tmux.conf` |
 | shell rc | `$HOME/.bashrc` |
+| pi settings | `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json` (user scope) |
 
 ### 4.2 tmux convergence (only when `tmux` is on `PATH`)
 
@@ -85,7 +95,23 @@ unrecognized rc means the color prompt is computed differently and a blind appen
 or drift. tmux directives are safe to append because the last setting wins; shell prompt logic is
 not.
 
-### 4.4 Flags
+### 4.4 pi settings convergence
+
+On `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/settings.json`:
+
+- If the file is absent, skip with a note (do not synthesize pi's config).
+- If it does not parse as JSON, warn and leave it unchanged (never corrupt pi's config).
+- Otherwise merge `terminal.trueColor = true`: parse, replace `terminal` with an object only if it
+  is missing or not an object, set `trueColor` to the boolean `true`, and re-serialize with
+  `JSON.stringify(obj, null, 2) + "\n"`. Every other key is preserved.
+- Idempotence is **semantic**: if `terminal.trueColor` is already `true`, report `[OK]` and write
+  nothing (so a file whose formatting already differs from `JSON.stringify` is not needlessly
+  rewritten). Only when the value must change is the file re-serialized.
+
+The same `[OK]` / `[PLAN]` / `[PENDING]` reporting, `.pi-extensions.bak` backup, and atomic
+replace apply as for the dotfiles.
+
+### 4.5 Flags
 
 - `--dry-run` — print the planned per-target changes (old→new) and modify nothing.
 - `--check` — exit non-zero unless every target is already converged (CI-friendly, mirrors
@@ -93,7 +119,7 @@ not.
 - `-h` / `--help`.
 - Default (no flag) — apply.
 
-### 4.5 Safety and idempotency
+### 4.6 Safety and idempotency
 
 - Never uses `sudo`; never writes `/etc` or any path outside the two targets above.
 - Before a file is changed, copy it once to `<file>.pi-extensions.bak` if that backup does not
@@ -139,6 +165,9 @@ not.
 5. **Backup/reversibility:** the first run creates `<file>.pi-extensions.bak`; restoring it plus
    deleting the appended lines returns the files to their pre-run content.
 6. **Absent-tool behavior:** with `PATH` lacking tmux, the script notes the skip and exits 0.
+7. **pi settings override:** a `settings.json` without a `terminal` key gains
+   `"terminal": { "trueColor": true }` with all other keys intact; a file already carrying
+   `trueColor: true` is left byte-identical; malformed JSON is warned about and untouched.
 
 ## 7. Out of scope
 
@@ -146,5 +175,6 @@ not.
 - Shells other than bash. `zsh` and others have no stock color gate to extend; a future change can
   add per-shell handlers rather than guess.
 - Non-tmux terminals: `COLORTERM` outside tmux is set by the terminal emulator, not by us.
-- Converging any other non-package pi configuration (AGENTS.md, models, themes, prompts) — still
-  out of scope per the monorepo-deployment design.
+- Converging any non-package pi configuration other than the single `terminal.trueColor` override
+  in §4.4 — AGENTS.md, models, themes, prompts remain out of scope per the monorepo-deployment
+  design.
