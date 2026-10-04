@@ -81,7 +81,9 @@ Guarantees: every touched file is backed up once as `<file>.pi-extensions.bak`; 
 never `sudo`; never `/etc`; `--dry-run` changes nothing; `--check` exits non-zero on drift
 (including the glyph patch); `--revert` restores the backups. The glyph patch lives inside a
 package install, so a remote-pi update silently reverts it — `--check` reports that and every
-apply re-applies it. `deploy/lib/check-pi-color.sh` prints the effective colour path for
+apply re-applies it. **Re-run `host-setup.sh --apply` after *any* remote-pi version bump or
+reinstall, even outside a normal deploy**: that is exactly when the node_modules glyph patch
+reverts, and nothing surfaces it unless `--check` runs. `deploy/lib/check-pi-color.sh` prints the effective colour path for
 self-verification.
 
 **Restart matrix.** `terminal-features` and the shell gate apply immediately / next shell; tmux

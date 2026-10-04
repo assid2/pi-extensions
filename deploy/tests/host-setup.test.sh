@@ -205,9 +205,9 @@ test_glyph_hard_fail() {
   if REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$HERE/../lib/fix-remote-pi-glyph.sh" --apply >/dev/null 2>&1; then fail "apply did not hard-fail on a missing block"; fi
 }
 test_glyph_foreign_marker() {
-  echo "T26 a footer already hand-patched with the peer marker is a no-op"
+  echo "T26 a footer already hand-patched with the peer marker (real shape) is a no-op"
   local h; h="$(new_home)"; mkdir -p "$h/rp/dist/ui"
-  printf 'if (state.relayOn) {\n    // LOCAL PATCH (2026-10-04)\n    ctx.ui.setStatus(K_RELAY, "\\u001b[38;2;1m●\\u001b[0m relay");\n}\n' > "$h/rp/dist/ui/footer.js"
+  printf 'const K_RELAY = "remote-pi:relay";\nfunction render(state, ctx) {\n    if (state.relayOn) {\n        // LOCAL PATCH (2026-10-04) \xe2\x80\x94 re-apply after a package update with:\n        //   ~/.pi/agent/bin/fix-remote-pi-glyph.sh\n        const GREEN = "\\u001b[38;2;166;227;161m";\n        const AMBER = "\\u001b[38;2;249;226;175m";\n        const RESET = "\\u001b[0m";\n        const dot = state.hasPairings ? `${GREEN}\xe2\x97\x8f${RESET}` : `${AMBER}\xe2\x97\x8f${RESET}`;\n        ctx.ui.setStatus(K_RELAY, `${dot} relay`); // \xe2\x97\x8f\n    }\n}\n' > "$h/rp/dist/ui/footer.js"
   local before; before="$(cksum "$h/rp/dist/ui/footer.js")"
   REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$HERE/../lib/fix-remote-pi-glyph.sh" --apply >/dev/null || fail "apply failed"
   [ "$before" = "$(cksum "$h/rp/dist/ui/footer.js")" ] || fail "double-patched a hand-patched footer"

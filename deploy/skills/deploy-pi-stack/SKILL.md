@@ -87,6 +87,8 @@ request.
    writes `/etc`. Always tell the user that tmux fixes land on **new** sessions only
    (`default-terminal` and `COLORTERM` are read at pane creation) and that the `settings.json`
    override needs a **pi restart** — do **not** kill the tmux server or restart pi for them.
+   Then run `<clone>/deploy/host-setup.sh --check` and relay its `Post-condition: PASS|FAIL` (the
+   `LIVE` section below it is advisory — tmux server state only materialises in new panes).
 
 7. **Report.** Relay `apply.sh`'s full output and exit status verbatim — do not summarise it away.
    `Post-condition: PASS` with exit 0 means the machine now runs exactly the declared stack — the
