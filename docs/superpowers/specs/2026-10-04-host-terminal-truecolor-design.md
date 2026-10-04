@@ -159,9 +159,13 @@ every mode:
   `K_PEER`'s 📱. Because it edits a package install, `--check` reports drift after any remote-pi
   update and every apply re-patches it. `is_patched` accepts **either** marker
   (`pi-extensions-glyph-patch` or the earlier hand patch's `LOCAL PATCH`), so an
-  already-hand-tweaked host is a no-op rather than a double patch. The diagnostic tolerates pi-tui
-  builds that do not export `getTerminalColorMode` and warns if that function and the
-  capability-derived value disagree.
+  already-hand-tweaked host is a no-op rather than a double patch. Glyph state is decided by
+  `is_patched` (marker + `U+25CF`), never by scanning the file for the emoji: an explanatory
+  comment *about* the emoji contains the emoji, so a whole-file text scan cannot tell a drawn
+  glyph from a merely discussed one. (This bit us once: preserving user comments — the T27 fix —
+  kept a comment that contains 🟢/🟡, and an emoji-absence heuristic then misread the patched file
+  as UNPATCHED.) The diagnostic tolerates pi-tui builds that do not export
+  `getTerminalColorMode` and warns if that function and the capability-derived value disagree.
 - **`check-pi-color.sh` — diagnostic.** Prints `TERM` / `COLORTERM`, the tmux client identity and
   features, `tput colors`, the `settings.json` `terminal.trueColor` value, the glyph patch state,
   and pi-tui's own `detectCapabilities` when resolvable. Report-only; never gates.
