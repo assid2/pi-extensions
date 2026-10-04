@@ -1,0 +1,150 @@
+# Design: host terminal truecolor convergence (`deploy/host-setup.sh`)
+
+- **Date:** 2026-10-04
+- **Status:** Approved in chat (2026-10-04), pending user review of this document
+- **Owner:** satish
+
+## 1. Purpose
+
+The extension stack renders correctly only when the terminal chain actually carries 24-bit
+color. `pi`, `vim`, and `opencode` all consult `COLORTERM`; tools that trust terminfo alone
+need a terminfo entry whose `setaf` emits direct RGB (`tmux-direct`); and tmux must be told to
+pass RGB through to the outer terminal (`terminal-features … :RGB`).
+
+Today that setup lives only in satish's hand-edited `~/.tmux.conf` and `~/.bashrc`. This design
+makes it part of **every install/upgrade of the stack**, so any machine that runs the deployment
+converges to a correct 24-bit terminal environment for the invoking user.
+
+This is the first non-package convergence the deployment performs. Section 7 of the
+monorepo-deployment design deliberately scoped v1 to `packages`-only; this document extends that
+scope for the terminal environment specifically, without disturbing `apply.sh`'s contract.
+
+## 2. Current state (verified on the dev machine, 2026-10-04)
+
+- tmux 3.5a, with a live server holding several sessions. `tmux-direct` is present in the system
+  terminfo database (`infocmp tmux-direct` succeeds; `setaf` emits `38:2::…`).
+- `~/.tmux.conf` sets `set -g default-terminal "tmux-256color"` and appends
+  `set -as terminal-features ",*:RGB"`. Because the running server's config has been re-sourced,
+  the append has landed four times in memory — `tmux show -s terminal-features` lists `*:RGB` at
+  indices 3, 4, 5, and 6. The file holds a single append line; the duplication is runtime state.
+- `~/.bashrc:43` carries the stock Debian color gate:
+  `xterm-color|*-256color) color_prompt=yes;;`. `tmux-direct` does not match it, so the prompt
+  silently drops to monochrome.
+- There is no `/etc/tmux.conf`, and `/etc` is not writable without sudo.
+- tmux's config precedence is `~/.tmux.conf` → `$XDG_CONFIG_HOME/tmux/tmux.conf` →
+  `~/.config/tmux/tmux.conf` → `/etc/tmux.conf`; the **first existing file wins entirely**.
+- Verified against an isolated tmux server: `set -s terminal-features[3] "*:RGB"` and
+  `set-environment -g COLORTERM truecolor` both apply as intended.
+
+## 3. Decisions taken in brainstorming
+
+- **Separate script, not `apply.sh`.** Host convergence lives in a new `deploy/host-setup.sh`,
+  invoked by the `deploy-pi-stack` skill as its own step. `apply.sh` keeps its documented
+  guarantee: it converges only through pi's CLI and touches only the settings `packages` key.
+- **Default-on, in-place edits.** The skill announces the host step rather than asking; the
+  script edits the user's existing config in place. This honors "part of any install/upgrade"
+  while remaining idempotent and reversible.
+- **Per-user, never `/etc`.** Writing `/etc/tmux.conf` would require sudo on every machine and
+  would be shadowed by the user's own `~/.tmux.conf` anyway. The script targets the first config
+  tmux actually reads for the invoking user. "System-wide" here means "every machine that runs
+  the stack."
+- **`deployment.json` is unchanged.** The script ships inside the repository, so it versions with
+  the monorepo tag like the rest of the deployment machinery.
+
+## 4. `deploy/host-setup.sh`
+
+A self-locating, idempotent Bash script (`readlink -f "${BASH_SOURCE[0]}"`, no hardcoded home).
+It converges the invoking user's terminal environment and reports every change.
+
+### 4.1 Targets
+
+| Target | Rule |
+|---|---|
+| tmux config | first existing of `$HOME/.tmux.conf`, `${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf`, `$HOME/.config/tmux/tmux.conf`; if none exists and tmux is installed, `$HOME/.tmux.conf` |
+| shell rc | `$HOME/.bashrc` |
+
+### 4.2 tmux convergence (only when `tmux` is on `PATH`)
+
+Each directive is matched as a whole line and rewritten; an absent directive is appended with a
+`# pi-extensions: 24-bit truecolor` marker.
+
+| Desired line | Match / replacement rule |
+|---|---|
+| `set -g default-terminal "tmux-direct"` | replace any `set[-option] … [-g] default-terminal …` line (report old→new); append if absent |
+| `set -s terminal-features[3] "*:RGB"` | replace any `terminal-features` line mentioning `RGB` with the indexed form (the file currently holds one append line); append if absent |
+| `set-environment -g COLORTERM truecolor` | replace any `set-environment … COLORTERM …` line; append if absent |
+
+### 4.3 shell convergence
+
+On `~/.bashrc`, extend only the Debian color gate:
+`xterm-color|*-256color)` → `xterm-color|*-256color|*-direct)`, on the line that sets
+`color_prompt=yes`. The unrelated `xterm*|rxvt*)` window-title case is left alone.
+
+If no such gate is found, the script **warns and skips** rather than appending prompt logic: an
+unrecognized rc means the color prompt is computed differently and a blind append would duplicate
+or drift. tmux directives are safe to append because the last setting wins; shell prompt logic is
+not.
+
+### 4.4 Flags
+
+- `--dry-run` — print the planned per-target changes (old→new) and modify nothing.
+- `--check` — exit non-zero unless every target is already converged (CI-friendly, mirrors
+  `apply.sh --check`).
+- `-h` / `--help`.
+- Default (no flag) — apply.
+
+### 4.5 Safety and idempotency
+
+- Never uses `sudo`; never writes `/etc` or any path outside the two targets above.
+- Before a file is changed, copy it once to `<file>.pi-extensions.bak` if that backup does not
+  already exist; write the new content to a temp file in the same directory and `mv` it into
+  place (atomic, preserves the original file mode).
+- Idempotent: a converged file matches every rule and is reported `[OK]` with no write; a second
+  run is a no-op.
+- A conflicting non-canonical value (e.g. `default-terminal "screen"`) is replaced and reported
+  loudly with the old value.
+- No tmux on `PATH` → skip the tmux part with a note, exit 0. No `~/.bashrc` → skip that part with
+  a note. Exit non-zero only on real errors (unreadable/unwritable target, failed write).
+- On success the script prints the latch caveat: **already-running tmux sessions keep their old
+  `TERM`; the change applies to newly created sessions** (tmux reads its config once at server
+  start, and `default-terminal` is fixed at session creation).
+
+## 5. Integration
+
+- **`deploy/skills/deploy-pi-stack/SKILL.md`** — a new step after `apply.sh`: run
+  `<clone>/deploy/host-setup.sh --dry-run`, show it, then run it; relay the output and the
+  new-session caveat. Announced, not gated.
+- **`deploy/skills/deploy-pi-stack/reference.md`** — document what host setup converges, the
+  latch caveat, and the per-user/never-`/etc` rule.
+- **`README.md`** — extend "What it does — and what it never does": `apply.sh` still touches only
+  the `packages` key; `host-setup.sh` is the separate, in-place dotfile step, with backup and
+  `--check`/`--dry-run`.
+- **`dev/setup-dev.sh`** — invoke `deploy/host-setup.sh` so the dev machine has parity.
+- **`deployment.json`** — unchanged.
+
+## 6. Verification
+
+1. **Before/after check:** `deploy/host-setup.sh --check` exits non-zero on the current machine;
+   after `deploy/host-setup.sh` it exits 0, and a second run reports all `[OK]` (idempotent).
+2. **Dry run is inert:** `--dry-run` output lists exactly the tmux `default-terminal`,
+   `terminal-features`, and `COLORTERM` changes plus the `~/.bashrc` gate change; file mtimes are
+   unchanged.
+3. **tmux effect, isolated:** with a scratch `HOME` and a scratch tmux socket (`tmux -L …`), a
+   **new** session reports `TERM=tmux-direct` and `COLORTERM=truecolor`, and
+   `tmux show -s terminal-features` shows the indexed `*:RGB`; the script's replacement prevents
+   the re-sourcing growth seen today (the stale in-memory entries at higher indices clear when the
+   server is restarted).
+4. **bash effect:** `TERM=tmux-direct bash -ic 'echo "$PS1"'` in the scratch home yields the
+   colored prompt; `TERM=dumb` does not.
+5. **Backup/reversibility:** the first run creates `<file>.pi-extensions.bak`; restoring it plus
+   deleting the appended lines returns the files to their pre-run content.
+6. **Absent-tool behavior:** with `PATH` lacking tmux, the script notes the skip and exits 0.
+
+## 7. Out of scope
+
+- `/etc/tmux.conf` (root, and shadowed by per-user config).
+- Shells other than bash. `zsh` and others have no stock color gate to extend; a future change can
+  add per-shell handlers rather than guess.
+- Non-tmux terminals: `COLORTERM` outside tmux is set by the terminal emulator, not by us.
+- Converging any other non-package pi configuration (AGENTS.md, models, themes, prompts) — still
+  out of scope per the monorepo-deployment design.
