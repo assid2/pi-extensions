@@ -227,11 +227,21 @@ test_diag_runs() {
   echo "T21 check-pi-color diagnostic runs and exits 0"
   bash "$HERE/../lib/check-pi-color.sh" >/dev/null 2>&1 || fail "diagnostic exited non-zero"
 }
+test_diag_agrees_on_foreign_marker() {
+  echo "T28 diagnostic agrees with the patch script on a foreign-marker footer"
+  local h; h="$(new_home)"; mkdir -p "$h/.local/share/pi-node/x/node_modules/remote-pi/dist/ui"
+  local f="$h/.local/share/pi-node/x/node_modules/remote-pi/dist/ui/footer.js"
+  printf 'if (state.relayOn) {\n  // LOCAL PATCH (2026-10-04) \xe2\x80\x94 x\n  ctx.ui.setStatus(K_RELAY, "\\u001b[38;2;1m\xe2\x97\x8f\\u001b[0m relay");\n}\n' > "$f"
+  local out; out="$(HOME="$h" REMOTE_PI_FOOTER="$f" bash "$HERE/../lib/check-pi-color.sh" 2>&1)"
+  echo "$out" | grep -q 'relay glyph: patched' || fail "diagnostic disagreed with a patched footer"
+  if echo "$out" | grep -q 'NOT patched'; then fail "diagnostic reported drift for a patched footer"; fi
+}
 
 test_glyph_patch
 test_glyph_hard_fail
 test_glyph_foreign_marker
 test_diag_runs
+test_diag_agrees_on_foreign_marker
 test_tf_existing_index_kept
 test_tf_duplicates_collapsed
 test_tf_lowest_free_index

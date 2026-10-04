@@ -13,6 +13,8 @@
 
 set -uo pipefail
 
+SELF_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+
 PI_TUI="${PI_TUI:-}"
 if [ -z "$PI_TUI" ]; then
   PI_TUI="$(find "$HOME/.pi/agent" "$HOME/.local/share/pi-node" "$HOME/.nvm" \
@@ -21,8 +23,12 @@ fi
 
 echo "TERM=${TERM:-<unset>}  COLORTERM=${COLORTERM:-<unset>}  TMUX=${TMUX:+set}"
 if command -v tmux >/dev/null 2>&1 && [ -n "${TMUX:-}" ]; then
-  echo "tmux client: $(tmux display-message -p '#{client_termname}' 2>/dev/null || echo '?')"
-  echo "tmux client features: $(tmux display-message -p '#{client_termfeatures}' 2>/dev/null || echo '?')"
+  client_name="$(tmux display-message -p '#{client_termname}' 2>/dev/null || true)"
+  [ -n "$client_name" ] || client_name="no attached client"
+  client_feat="$(tmux display-message -p '#{client_termfeatures}' 2>/dev/null || true)"
+  [ -n "$client_feat" ] || client_feat="(none reported)"
+  echo "tmux client: $client_name"
+  echo "tmux client features: $client_feat"
   echo "tmux default-terminal: $(tmux show -g default-terminal 2>/dev/null || echo '?')"
   echo "tmux COLORTERM: $(tmux show-environment -g COLORTERM 2>/dev/null || echo '<unset>')"
 fi
@@ -32,14 +38,23 @@ if [ -f "$SETTINGS" ]; then
   echo "settings terminal.trueColor: $(node -e 'try{const j=require(process.argv[1]);process.stdout.write(String(j.terminal?.trueColor))}catch(e){process.stdout.write("?")}' "$SETTINGS" 2>/dev/null || echo '?')"
 fi
 
+# Single source of truth: ask the glyph patch script (same is_patched rule as CONFIG),
+# so the LIVE section can never contradict the CONFIG section in the same run.
 FOOTER="$(find "$HOME/.pi/agent" "$HOME/.local/share/pi-node" -type f -path '*/remote-pi/dist/ui/footer.js' 2>/dev/null | head -1 || true)"
-if [ -n "$FOOTER" ]; then
-  if grep -qF 'pi-extensions-glyph-patch' "$FOOTER" 2>/dev/null; then
+FIX_GLYPH="$SELF_DIR/fix-remote-pi-glyph.sh"
+if [ -x "$FIX_GLYPH" ]; then
+  glyph_out="$("$FIX_GLYPH" --check 2>&1 || true)"
+  case "$glyph_out" in
+    *"not found"*) : ;; # remote-pi not installed - say nothing
+    *"relay glyph patched"*) echo "remote-pi relay glyph: patched" ;;
+    *) echo "remote-pi relay glyph: NOT patched or drifted — run deploy/lib/fix-remote-pi-glyph.sh --check" ;;
+  esac
+elif [ -n "$FOOTER" ]; then
+  if { grep -qF 'pi-extensions-glyph-patch' "$FOOTER" 2>/dev/null || grep -qF 'LOCAL PATCH' "$FOOTER" 2>/dev/null; } \
+     && { grep -qF '●' "$FOOTER" 2>/dev/null || grep -qF 'u25cf' "$FOOTER" 2>/dev/null; }; then
     echo "remote-pi relay glyph: patched"
-  elif grep -qP '\x{1F7E2}|\x{1F7E1}' "$FOOTER" 2>/dev/null; then
-    echo "remote-pi relay glyph: UNPATCHED (emoji present — grey on clients without a colour-emoji font)"
   else
-    echo "remote-pi relay glyph: unknown (no marker, no emoji — review by hand)"
+    echo "remote-pi relay glyph: NOT patched or drifted — run deploy/lib/fix-remote-pi-glyph.sh --check"
   fi
 fi
 
