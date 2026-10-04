@@ -8,6 +8,11 @@
 # Report only; exits 0. Resolution of pi-tui: $PI_TUI, then a scan of the agent dir, the pi-node
 # store, and ~/.nvm (which covers nvm-installed pi-coding-agent nested node_modules).
 #
+# Invariant "one source, one answer": the file-backed rows (settings.json trueColor, the glyph
+# state) must agree with host-setup.sh's CONFIG section - the glyph row is delegated to the same
+# fix-remote-pi-glyph.sh --check. Only the live tmux rows (default-terminal, COLORTERM, pane TERM)
+# may legitimately lag, since tmux applies them to new panes only.
+#
 # Tested against pi-tui 1.0.0 (nvm install), which exports getTerminalColorMode; other builds
 # export only detectCapabilities. The probe tolerates both and WARNs if the two disagree.
 

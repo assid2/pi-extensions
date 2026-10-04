@@ -91,6 +91,18 @@ self-verification.
 need a **pi restart**. Never `tmux kill-server` (it kills running pi agents); never restart pi
 without telling the user.
 
+**Backups.** Two conventions coexist and are both intentional: `host-setup.sh` writes
+`<file>.pi-extensions.bak`, while the remote-pi glyph script keeps a pristine `<footer.js>.orig`
+(and accepts an existing hand patch). Restore the right one for the file you are reverting.
+
+**One source, one answer.** `host-setup.sh --check` gates only on CONFIG — the file-backed state:
+`settings.json`'s key, the canonical tmux lines, the `*-direct` gate, the glyph marker. The LIVE
+section reuses that same glyph verdict and reads the same `settings.json`, so those rows cannot
+legitimately disagree (an emoji *inside a comment* must never be read as an unpatched glyph). Only
+the genuinely live tmux rows (`default-terminal`, `COLORTERM`, pane `TERM`) may show
+CONFIG-ok / LIVE-stale, because tmux applies them to new panes only — that lag is expected, not
+drift.
+
 ## Prerequisites on a fresh machine
 
 - pi is already installed (this deployment converges the extension stack; it does not install or
