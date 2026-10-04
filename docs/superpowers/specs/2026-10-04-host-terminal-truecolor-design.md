@@ -113,11 +113,15 @@ replace apply as for the dotfiles.
 
 ### 4.5 Flags
 
-- `--dry-run` — print the planned per-target changes (old→new) and modify nothing.
-- `--check` — exit non-zero unless every target is already converged (CI-friendly, mirrors
-  `apply.sh --check`).
+- `--dry-run` — print the planned per-target changes and modify nothing.
+- `--check` — the deploy **post-condition**. It gates only on **CONFIG** state (settings key,
+  canonical tmux lines with no duplicate `*:RGB`, the `*-direct` gate, the glyph marker) and prints
+  `Post-condition: PASS|FAIL`, mirroring `apply.sh`. **LIVE** state (tmux server `COLORTERM` /
+  `default-terminal`, pane `TERM`) is printed **advisory only** — it can only reflect panes created
+  afterwards, so it never fails the check.
+- `--apply` (default) — converge.
+- `--revert` — restore every `<file>.pi-extensions.bak`.
 - `-h` / `--help`.
-- Default (no flag) — apply.
 
 ### 4.6 Safety and idempotency
 
@@ -153,7 +157,11 @@ every mode:
   is dynamic: `$REMOTE_PI_FOOTER`, then the path `pi list` reports, then a scan — never hardcoded.
   Known-remaining, same unstyled-emoji class but not state indicators: `K_SESSION`'s 📡 and
   `K_PEER`'s 📱. Because it edits a package install, `--check` reports drift after any remote-pi
-  update and every apply re-patches it.
+  update and every apply re-patches it. `is_patched` accepts **either** marker
+  (`pi-extensions-glyph-patch` or the earlier hand patch's `LOCAL PATCH`), so an
+  already-hand-tweaked host is a no-op rather than a double patch. The diagnostic tolerates pi-tui
+  builds that do not export `getTerminalColorMode` and warns if that function and the
+  capability-derived value disagree.
 - **`check-pi-color.sh` — diagnostic.** Prints `TERM` / `COLORTERM`, the tmux client identity and
   features, `tput colors`, the `settings.json` `terminal.trueColor` value, the glyph patch state,
   and pi-tui's own `detectCapabilities` when resolvable. Report-only; never gates.
@@ -207,6 +215,9 @@ every mode:
 - Shells beyond bash and zsh: other rc files have no stock gate to extend; a future change can add
   per-shell handlers rather than guess.
 - Non-tmux terminals: `COLORTERM` outside tmux is set by the terminal emulator, not by us.
+- A 16-colour ANSI fallback for the relay dot: **WON'T DO.** A palette-dependent fallback
+  reintroduces the per-client variance this work removes; a genuinely 16-colour client is the thing
+  to fix, not a silent downgrade in the patch.
 - Converging other pi configuration (AGENTS.md, models, themes, prompts). Only the terminal
   environment is in scope: the `terminal.trueColor` override (§4.4), the tmux and shell settings
   (§4.2–4.3), and the remote-pi relay glyph (§4.7).

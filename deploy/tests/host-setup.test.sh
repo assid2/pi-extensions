@@ -204,6 +204,15 @@ test_glyph_hard_fail() {
   local h; h="$(new_home)"; mkdir -p "$h/rp/dist/ui"; printf 'export const x = 1;\n' > "$h/rp/dist/ui/footer.js"
   if REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$HERE/../lib/fix-remote-pi-glyph.sh" --apply >/dev/null 2>&1; then fail "apply did not hard-fail on a missing block"; fi
 }
+test_glyph_foreign_marker() {
+  echo "T26 a footer already hand-patched with the peer marker is a no-op"
+  local h; h="$(new_home)"; mkdir -p "$h/rp/dist/ui"
+  printf 'if (state.relayOn) {\n    // LOCAL PATCH (2026-10-04)\n    ctx.ui.setStatus(K_RELAY, "\\u001b[38;2;1m●\\u001b[0m relay");\n}\n' > "$h/rp/dist/ui/footer.js"
+  local before; before="$(cksum "$h/rp/dist/ui/footer.js")"
+  REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$HERE/../lib/fix-remote-pi-glyph.sh" --apply >/dev/null || fail "apply failed"
+  [ "$before" = "$(cksum "$h/rp/dist/ui/footer.js")" ] || fail "double-patched a hand-patched footer"
+  REMOTE_PI_FOOTER="$h/rp/dist/ui/footer.js" bash "$HERE/../lib/fix-remote-pi-glyph.sh" --check >/dev/null || fail "--check not OK on hand-patched footer"
+}
 test_diag_runs() {
   echo "T21 check-pi-color diagnostic runs and exits 0"
   bash "$HERE/../lib/check-pi-color.sh" >/dev/null 2>&1 || fail "diagnostic exited non-zero"
@@ -211,6 +220,7 @@ test_diag_runs() {
 
 test_glyph_patch
 test_glyph_hard_fail
+test_glyph_foreign_marker
 test_diag_runs
 test_tf_existing_index_kept
 test_tf_duplicates_collapsed

@@ -207,15 +207,12 @@ converge_all() {
     converge_cmd "$settings" "$settings: set terminal.trueColor=true" node -e "$SETTINGS_MERGE"
   fi
 
-  # items 4-5 — delegated stages
-  local lib
-  for lib in fix-remote-pi-glyph check-pi-color; do
-    if [ -x "$SCRIPT_DIR/lib/$lib.sh" ]; then
-      if ! "$SCRIPT_DIR/lib/$lib.sh" "--$MODE"; then
-        [ "$MODE" = "check" ] && CONVERGED=0
-      fi
+  # item 4 — delegated config stage (gating)
+  if [ -x "$SCRIPT_DIR/lib/fix-remote-pi-glyph.sh" ]; then
+    if ! "$SCRIPT_DIR/lib/fix-remote-pi-glyph.sh" "--$MODE"; then
+      [ "$MODE" = "check" ] && CONVERGED=0
     fi
-  done
+  fi
 }
 
 revert_all() {
@@ -225,12 +222,9 @@ revert_all() {
     [ -f "$rc" ] && revert_file "$rc"
   done
   revert_file "$AGENT_DIR/settings.json"
-  local lib
-  for lib in fix-remote-pi-glyph check-pi-color; do
-    if [ -x "$SCRIPT_DIR/lib/$lib.sh" ]; then
-      "$SCRIPT_DIR/lib/$lib.sh" --revert || true
-    fi
-  done
+  if [ -x "$SCRIPT_DIR/lib/fix-remote-pi-glyph.sh" ]; then
+    "$SCRIPT_DIR/lib/fix-remote-pi-glyph.sh" --revert || true
+  fi
 }
 
 if [ "$MODE" = "revert" ]; then
@@ -243,12 +237,19 @@ echo "pi-extensions host-setup: $MODE"
 converge_all
 
 if [ "$MODE" = "check" ]; then
+  # Only CONFIG state gates the deploy. LIVE state (tmux server env, pane TERM) can only
+  # reflect changes in panes/sessions created afterwards, so it is advisory, never a failure.
   if [ "$CONVERGED" = 1 ]; then
-    echo "converged: host terminal setup is complete"
-    exit 0
+    echo "Post-condition: PASS (host terminal config converged)"
+  else
+    echo "Post-condition: FAIL — run host-setup.sh (or the deploy skill) to fix" >&2
   fi
-  echo "NOT converged — run host-setup.sh (or the deploy skill) to fix" >&2
-  exit 1
+  echo
+  echo "LIVE (advisory — new panes/sessions only; never gates the deploy):"
+  if [ -x "$SCRIPT_DIR/lib/check-pi-color.sh" ]; then
+    "$SCRIPT_DIR/lib/check-pi-color.sh" || true
+  fi
+  [ "$CONVERGED" = 1 ] && exit 0 || exit 1
 fi
 
 if [ "$MODE" = "apply" ]; then

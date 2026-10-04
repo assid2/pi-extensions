@@ -6,7 +6,10 @@
 #   check-pi-color.sh --with-colorterm  same, with COLORTERM=truecolor injected
 #
 # Report only; exits 0. Resolution of pi-tui: $PI_TUI, then a scan of the agent dir, the pi-node
-# store, and ~/.nvm.
+# store, and ~/.nvm (which covers nvm-installed pi-coding-agent nested node_modules).
+#
+# Tested against pi-tui 1.0.0 (nvm install), which exports getTerminalColorMode; other builds
+# export only detectCapabilities. The probe tolerates both and WARNs if the two disagree.
 
 set -uo pipefail
 
@@ -45,9 +48,12 @@ if [ -n "$PI_TUI" ] && [ -f "$PI_TUI/dist/terminal-image.js" ]; then
   cat > "$PROBE" <<'NODE'
 const m = await import(globalThis.process.env.PI_TUI + '/dist/terminal-image.js');
 const c = m.detectCapabilities();
-const mode = typeof m.getTerminalColorMode === 'function'
-  ? m.getTerminalColorMode(c)
-  : (c && c.trueColor ? 'truecolor' : 'no-truecolor');
+const derived = c && c.trueColor ? 'truecolor' : 'no-truecolor';
+let mode = derived;
+if (typeof m.getTerminalColorMode === 'function') {
+  mode = m.getTerminalColorMode(c);
+  if (mode !== derived) console.error('WARN: getTerminalColorMode=' + mode + ' disagrees with derived=' + derived);
+}
 console.log(JSON.stringify({ mode, ...c }));
 NODE
   export PI_TUI

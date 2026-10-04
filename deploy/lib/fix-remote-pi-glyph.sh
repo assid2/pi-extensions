@@ -43,9 +43,12 @@ resolve_footer() {
 }
 
 has_emoji() { grep -qP '\x{1F7E2}|\x{1F7E1}' "$1" 2>/dev/null; }
-is_patched() {
-  grep -qF "$MARKER" "$1" 2>/dev/null || return 1
-  grep -qF '●' "$1" 2>/dev/null || grep -qF 'u25cf' "$1" 2>/dev/null
+is_patched() { # any recognised marker + a U+25CF dot (accepts the pre-deploy hand patch on ai)
+  local f="$1"
+  if ! grep -qF 'pi-extensions-glyph-patch' "$f" 2>/dev/null && ! grep -qF 'LOCAL PATCH' "$f" 2>/dev/null; then
+    return 1
+  fi
+  grep -qF '●' "$f" 2>/dev/null || grep -qF 'u25cf' "$f" 2>/dev/null
 }
 
 FOOTER="$(resolve_footer || true)"
