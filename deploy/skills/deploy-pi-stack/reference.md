@@ -17,6 +17,19 @@ third-party entries deliberately carry no version — a machine converges to wha
 publishes as latest at apply time. Two machines applying the same tag on different days can hold
 different third-party versions; that is by design.
 
+### Decisions (at a glance)
+
+- **Only the monorepo's own tag is pinned.** The self-entry in `deployment.json` is frozen at the
+  release tag; it is the single fixed point of the stack.
+- **Third-party extensions are never version-pinned.** `npm:@tintinweb/pi-subagents`,
+  `npm:@monotykamary/pi-tps`, and `git:github.com/obra/superpowers` carry no version — a fresh
+  install **and** every update take the latest release. Reproducible *composition*, not reproducible
+  *versions*; deliberate.
+- **Our modified extensions ship in-tree** (`pi-usage`, `pi-dynamic-workflows`, `pi-ollama-cloud`,
+  `pi-commandcode-cloud`), loaded from the monorepo and pinned by its tag. The external published
+  `npm:pi-ollama-cloud` is **retired** and removed on apply, so it cannot double-load alongside the
+  vendored prefix-aware fork.
+
 ## The deployment contract
 
 - **Frozen self-pin.** A machine bootstrapped at `vX` converges to `vX` forever; `apply.sh` never
