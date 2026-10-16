@@ -7,58 +7,73 @@ repository. It declares:
 
 | Package | Ref | What it provides |
 |---|---|---|
-| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | its own release tag (frozen) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `pi-dynamic-workflows` (dynamic workflows, patched fork of `@quintinshaw/pi-dynamic-workflows`), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
+| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | newest release tag (floating; entry is unversioned) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `pi-dynamic-workflows` (dynamic workflows, patched fork of `@quintinshaw/pi-dynamic-workflows`), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
 | `npm:@tintinweb/pi-subagents` | latest (unpinned) | subagent orchestration tools |
 | `npm:@monotykamary/pi-tps` | latest (unpinned) | tokens/second display |
 | `git:github.com/obra/superpowers` | latest (unpinned) | superpowers skill suite |
+| `npm:remote-pi` | latest (unpinned) | official npm package (never forked); only its relay footer glyph is post-patched by `host-setup.sh` |
 
-The repository's *tag* is the only fixed point: it pins the self-hosted part of the stack. The
-third-party entries deliberately carry no version — a machine converges to whatever npm/GitHub
-publishes as latest at apply time. Two machines applying the same tag on different days can hold
-different third-party versions; that is by design.
+The self-entry is **unversioned**: `apply.sh` resolves the newest release tag at apply time and
+floats the clone to it. The third-party entries also carry no version — a machine converges to
+whatever npm/GitHub publishes as latest at apply time. Two machines applying on different days can
+hold different self and third-party versions; that is by design. `npm:remote-pi` is the official
+npm package, installed as-is (never forked); only its relay footer glyph is post-patched by
+`host-setup.sh`.
 
 ### Decisions (at a glance)
 
-- **Only the monorepo's own tag is pinned.** The self-entry in `deployment.json` is frozen at the
-  release tag; it is the single fixed point of the stack.
+- **The self-entry floats.** `deployment.json`'s monorepo entry is unversioned; `apply.sh`
+  resolves the newest `v*` release tag with `git ls-remote`, floats the clone to it, and re-execs
+  itself once so the new manifest converges in the same run. `PI_EXTENSIONS_LATEST_TAG` overrides
+  the resolved tag (offline/CI/tests) and `PI_EXTENSIONS_NO_REEXEC=1` suppresses the re-exec
+  (internal loop guard).
 - **Third-party extensions are never version-pinned.** `npm:@tintinweb/pi-subagents`,
-  `npm:@monotykamary/pi-tps`, and `git:github.com/obra/superpowers` carry no version — a fresh
-  install **and** every update take the latest release. Reproducible *composition*, not reproducible
-  *versions*; deliberate.
+  `npm:@monotykamary/pi-tps`, `git:github.com/obra/superpowers`, and `npm:remote-pi` carry no
+  version — a fresh install **and** every update take the latest release. Reproducible
+  *composition*, not reproducible *versions*; deliberate.
 - **Our modified extensions ship in-tree** (`pi-usage`, `pi-dynamic-workflows`, `pi-ollama-cloud`,
-  `pi-commandcode-cloud`), loaded from the monorepo and pinned by its tag. The external published
-  `npm:pi-ollama-cloud` is **retired** and removed on apply, so it cannot double-load alongside the
-  vendored prefix-aware fork.
+  `pi-commandcode-cloud`), loaded from the monorepo and tracked by its newest release tag. The
+  external published `npm:pi-ollama-cloud` is **retired** and removed on apply, so it cannot
+  double-load alongside the vendored prefix-aware fork. `npm:remote-pi` is the official npm
+  package — we do not fork it; only its relay footer glyph is post-patched by `host-setup.sh`.
 
 ## The deployment contract
 
-- **Frozen self-pin.** A machine bootstrapped at `vX` converges to `vX` forever; `apply.sh` never
-  moves the monorepo entry to a newer tag on its own. "Bring me up to date" is therefore an
-  explicit two-step: (1) resolve the highest release tag and `pi install ...@<new-tag>` (which
-  moves the clone and rewrites the pinned settings entry), then (2) run `apply.sh` **from the
-  updated clone** so the new `deployment.json` governs.
+- **Floating self-entry.** `deployment.json`'s monorepo entry is unversioned. `apply.sh` resolves
+  the newest `v*` release tag (`git ls-remote`), floats the self clone to it (reusing the URL/
+  scheme already installed), and re-execs itself once from the updated clone so the new
+  `deployment.json` converges in the same invocation. "Bring me up to date" is therefore a single
+  `apply.sh` run. If the newest tag cannot be resolved (offline), a present self-entry is enough;
+  `PI_EXTENSIONS_LATEST_TAG` overrides the resolved tag.
 - **Third-party float.** Non-self entries in `deployment.json` are unversioned. `apply.sh` installs
   them unpinned and runs `pi update` for each one on every apply, so they always take the latest
   release. Never add a version to a third-party entry unless you deliberately want to freeze it.
 - **Retired entries.** `deployment.json` may list `retired` package specs (for example
   `npm:pi-ollama-cloud`, which moved into this repository as a vendored fork). `apply.sh` removes
   any matching settings entry with `pi remove`, even in additive mode — retired entries are
-  one-time migrations, not unrelated drift. It also removes a local-path entry that points at a
-  *different* checkout of this repository (detected from that clone's `deployment.json` self-pin,
-  so it works even when the duplicate has no `origin` remote); such a copy would otherwise
-  double-load the repository's extensions.
-- **`--check` is structural.** It asserts the declared entries are present with the declared pins;
-  it cannot detect that upstream has published something newer.
-- **`deployment.json` release rule** (enforced as a check inside `apply.sh`, not prose): the file's
-  `version` field must equal the ref its own monorepo entry pins.
+  one-time migrations, not unrelated drift. The same self-healing covers: a local-path entry that
+  points at a *different* checkout of this repository (identified by the checkout's repository
+  identity, so it works even without an `origin` remote); a duplicate *git* self-entry (for
+  example an SSH entry left beside an HTTPS one); and a local-path copy of a managed npm package
+  (for example a global `remote-pi` beside `npm:remote-pi`). Each would otherwise double-load the
+  same extensions, so the redundant entry is retired.
+- **`--check` is structural and offline-tolerant.** It asserts the declared entries are present
+  (when the newest tag resolves, the self entry must equal it; when it cannot, a present
+  self-entry is enough). It cannot detect that upstream has published something newer.
+- **Self-entry transport follows the installed machine.** The self-entry's *URL* is not hardcoded
+  on update: `apply.sh` reuses the URL/scheme already in settings (or the documented
+  `PI_EXTENSIONS_SELF_URL` override), so an https-installed machine stays https beside the
+  manifest's SSH default.
 
 ## What `apply.sh` guarantees
 
 - Additive by default: it never removes packages you added yourself. `--prune` is the only mode
   that removes *unrelated* drift, and it is never implied. Additive mode does remove
-  manifest-declared retired entries and duplicate checkouts of this repository (see above).
+  manifest-declared retired entries, duplicate checkouts of this repository, duplicate git
+  entries for this repository, and local-path copies of a managed npm package (see above).
 - `--dry-run` prints the plan and changes nothing. `--check` exits non-zero if not *structurally*
-  converged (CI-friendly).
+  converged (CI-friendly, offline-tolerant: a present self-entry satisfies the check when the
+  newest tag cannot be resolved; when resolved, the self pin must equal it).
 - Unpinned manifest entries are always refreshed to the latest release (`pi update <spec>`): npm
   entries move to the newest published version and settings stay unversioned; a no-ref git entry
   fast-forwards to its default-branch head. The per-entry plan labels these `LATEST`, `UNPIN`
@@ -73,9 +88,26 @@ different third-party versions; that is by design.
   monorepo entry counts as satisfied and the git package is not installed — so a live dev
   checkout and a cloned copy are never loaded simultaneously. If both are present, `apply.sh`
   removes the redundant git entry (that state would double-load the extensions).
+- **Self-entry transport is inherited, never hardcoded.** When floating the monorepo to the
+  newest release tag, `apply.sh` installs through the URL/scheme the machine already resolves this
+  repository with (settings are matched on normalized host/path, so
+  `ssh://git@ssh.github.com:443/...` and `https://github.com/...` are the same repo). An
+  https-installed machine therefore stays https, and no second clone appears under
+  `git/ssh.github.com/`. A *fresh* install uses the manifest URL (SSH); set
+  `PI_EXTENSIONS_SELF_URL=<url>` to force a different transport — the newest tag is still appended
+  and the value must normalize to this repository. Duplicate git entries for this repo are retired
+  in additive mode (like duplicate local checkouts), so a machine that already grew an SSH
+  duplicate self-heals on the next apply.
+- **The self-entry follows the newest release.** `apply.sh` resolves it with
+  `git ls-remote --tags` (model-free) and re-execs itself once from the updated clone
+  (`PI_EXTENSIONS_NO_REEXEC=1` is the internal loop guard). Set `PI_EXTENSIONS_LATEST_TAG=<tag>`
+  to override the resolved tag (offline/CI/tests). `deploy/bootstrap.sh` is the model-free entry
+  point for a fresh machine: it resolves the newest tag, `pi install`s the monorepo at it, runs
+  the clone's `apply.sh`, then `deploy/host-setup.sh` (skip with
+  `PI_EXTENSIONS_SKIP_HOST_SETUP=1`).
 - Preflight (clear error + non-zero exit, never a stack trace): `pi` on PATH and loadable;
-  `git`/`node` present; `deployment.json` parses; the release-rule check; the clone contains a
-  root `package.json` and every path its `pi` manifest declares.
+  `git`/`node` present; `deployment.json` parses; the clone contains a root `package.json` and
+  every path its `pi` manifest declares.
 
 ## Host terminal setup (`host-setup.sh`)
 
@@ -122,8 +154,8 @@ drift.
   upgrade pi itself).
 - Outbound SSH on port 443 (`ssh://git@ssh.github.com:443/...`) or, if the user's ssh client
   prefers the classic port, any equivalent way for `git` to reach the repository — `apply.sh`
-  itself performs no git network operations; pi's `pi install` does the cloning using whatever
-  SSH setup the user has.
+  resolves the newest release tag with `git ls-remote` (model-free; no provider needed), and pi's
+  `pi install` does the cloning using whatever SSH setup the user has.
 - Write access is only needed if you are the one *releasing* new stack versions
   (commit + tag + push). Installing/refreshing is read-only.
 
@@ -132,18 +164,21 @@ drift.
 - **`pi install` of the monorepo fails on SSH:** check `ssh -v -p 443 git@ssh.github.com` and
   `~/.ssh/config`; GitHub's ssh.github.com:443 is the fallback for networks that block port 22.
 - **Clone path:** pi clones git packages to `$PI_CODING_AGENT_DIR/git/<host>/<path>`, where
-  `<host>` is the literal URL host and is *not* normalized: the SSH self-pin produces
+  `<host>` is the literal URL host and is *not* normalized: the SSH self-entry produces
   `.../git/ssh.github.com/assid2/pi-extensions`, while an `https://github.com/...` origin produces
   `.../git/github.com/assid2/pi-extensions`. Resolve it from `pi list` rather than assuming.
-- **`apply.sh: ERROR: release rule violated`:** the checkout's `deployment.json` is internally
-  inconsistent (version field vs self-pin). Refuse to run; this is a broken release, report it.
-- **Post-condition MISMATCH after a pin bump:** the clone was not actually moved (a failed
-  `pi install`); re-run step 3 and check its exit status before applying.
-- **Settings pin looks converged but the tree is not:** a clone can be one commit or more past its
-  pin (`describe: v1.0.2-1-g39ed164` while settings says `@v1.0.2`). `apply.sh` compares settings
-  identities, not working-tree content, so it cannot see this. After step 3, assert
-  `git -C <clone> describe --tags --exact-match HEAD` equals the resolved tag; if it does not,
-  re-clone or reset the clone to that tag before applying.
+  `apply.sh` preserves whichever host is already in settings when it floats to the newest tag, so
+  it will not move an https install to the `ssh.github.com` clone; if a second clone already
+  exists, the extra settings entry is retired on the next apply.
+- **Post-condition MISMATCH after the self-entry floats:** the clone was not actually moved (a
+  failed `pi install`); re-run `apply.sh` and check its exit status. The re-exec is suppressed
+  when `PI_EXTENSIONS_NO_REEXEC=1`, so a manual `pi install ...@<tag>` followed by `apply.sh` is
+  the fallback.
+- **Settings ref looks converged but the tree is not:** a clone can be one commit or more past the
+  resolved tag (`describe: v1.0.2-1-g39ed164` while settings says `@v1.0.2`). `apply.sh` compares
+  settings identities, not working-tree content, so it cannot see this. Assert
+  `git -C <clone> describe --tags --exact-match HEAD` equals the newest tag; if it does not,
+  re-clone or reset the clone to that tag, then re-run `apply.sh`.
 - **A third-party package looks stale:** run `apply.sh` again — it refreshes every unpinned entry
   with `pi update <spec>` (or run that command directly). A bare `pi install` of an unpinned npm
   spec can resolve inside the version range recorded earlier; the explicit `pi update` pass is what

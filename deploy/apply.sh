@@ -2,25 +2,38 @@
 # apply.sh — converge a pi install to the extension stack declared in ../deployment.json.
 #
 # Usage:
-#   apply.sh             additive apply: install/move manifest entries to their pins,
-#                        refresh unpinned entries to the latest release (`pi update`),
-#                        and remove entries the manifest explicitly retires (one-time
-#                        migrations such as a package that moved into this repo);
-#                        other packages not in the manifest are left alone (drift)
+#   apply.sh             additive apply: install/move manifest entries, float the monorepo
+#                        self-entry to the newest release tag, refresh unpinned third-party
+#                        entries to their latest release (`pi update`), and remove entries the
+#                        manifest explicitly retires (one-time migrations); other packages not
+#                        in the manifest are left alone (drift)
 #   apply.sh --dry-run   print the per-entry plan; change nothing; exit 0
 #   apply.sh --check     exit non-zero if the target is not currently converged; print what differs
 #   apply.sh --prune     exact mirror: also remove settings entries not in the manifest
 #
+# Env:
+#   PI_EXTENSIONS_SELF_URL   override the self-entry URL/scheme (must resolve to this repo)
+#   PI_EXTENSIONS_LATEST_TAG  override the resolved newest release tag (CI/offline/tests)
+#   PI_EXTENSIONS_NO_REEXEC   set to 1 to forbid the post-self-update re-exec (internal guard)
+#
 # Guarantees:
 #   - Self-locating: reads ../deployment.json relative to this script (BASH_SOURCE), never cwd.
+#   - The monorepo self-entry is never frozen: apply resolves the newest `v*` release tag
+#     (git ls-remote) and moves the self clone to it (re-running itself once from the updated
+#     clone so the new manifest converges in the same invocation). The manifest self-entry is
+#     therefore unversioned — the release tag, not the manifest, is the moving fixed point.
+#   - Never installs the monorepo self-entry through the manifest's hardcoded URL when the
+#     target already resolves this repo another way: the existing settings entry's URL/scheme
+#     is reused, so an https-installed machine stays https and never grows a second clone
+#     under git/ssh.github.com/. PI_EXTENSIONS_SELF_URL overrides the URL (same-repo validated).
 #   - Machine-independent: no hardcoded home dir, username, or absolute path. The target
 #     agent dir is PI_CODING_AGENT_DIR (pi's own override) or ~/.pi/agent.
 #   - Converges exclusively through pi's own CLI (pi install / pi remove / pi update). It never
 #     writes or rewrites any JSON file, never hand-edits settings, and touches only the `packages`
 #     key — never auth.json, models.json, models-store.json, AGENTS.md, or any other file.
-#   - Removes manifest-declared retired entries, and local-path entries that are a duplicate
-#     checkout of this same repo, with `pi remove` even in additive mode; `--prune` is still
-#     required to remove unrelated drift.
+#   - Removes manifest-declared retired entries, local-path entries that are a duplicate
+#     checkout of this same repo, and local copies of a manifest npm package, with `pi remove`
+#     even in additive mode; `--prune` is still required to remove unrelated drift.
 #   - Sequential, one entry at a time; the first failure stops the run with a non-zero exit
 #     and the full per-entry status table.
 #   - Post-condition (apply mode): after converging, the settings `packages` list is
@@ -99,18 +112,32 @@ EOF
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 SETTINGS="$AGENT_DIR/settings.json"
 
-# Advisory: is this checkout tagged at the manifest's version? (informational only)
+# Advisory: is this checkout tagged at the newest release? (informational only)
 HEAD_TAG="$(git -C "$REPO_ROOT" describe --tags --exact-match HEAD 2>/dev/null || true)"
 HEAD_SHORT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || true)"
+
+# Newest release tag of this repository, resolved model-free. PI_EXTENSIONS_LATEST_TAG
+# overrides it (CI, offline, tests). If ls-remote fails we keep it empty: --check falls
+# back to structural, apply leaves the self-entry where it is and warns.
+if [ -n "${PI_EXTENSIONS_LATEST_TAG:-}" ]; then
+  LATEST_TAG="$PI_EXTENSIONS_LATEST_TAG"
+else
+  LATEST_TAG="$(git ls-remote --tags "$ORIGIN_URL" 2>/dev/null \
+    | awk -F'\t' '$2 ~ /^refs\/tags\/v[0-9]/ { t = $2; sub(/^refs\/tags\//, "", t); sub(/\^\{\}$/, "", t); print t }' \
+    | sort -uV | tail -1 || true)"
+fi
 
 # ---------------------------------------------------------------- plan
 
 # The node planner:
 #  - parses manifest + settings, normalizes identities (npm name; git domain/path with
 #    scheme/host-variant-insensitive normalization — ssh.github.com:443 == github.com)
-#  - verifies the release rule: manifest.version == the monorepo self-entry's pin
+#  - floats the monorepo self-entry to PI_EXTENSIONS_LATEST_TAG (the newest release tag)
 #  - resolves the dev-checkout dedup rule: a local-path settings entry whose git origin is
 #    the same repository as the monorepo entry satisfies it
+#  - resolves the self-entry install URL: PI_EXTENSIONS_SELF_URL, else the existing settings
+#    git entry URL/scheme, else the manifest URL — never the manifest URL over an
+#    already-installed different scheme
 #  - emits TSV lines:  M <idx> <ACTION> <spec> <detail>   (one per manifest entry)
 #                      D <idx> <spec> <detail>            (one per non-manifest entry)
 #                      N <msg>                            (advisory notes)
@@ -130,6 +157,8 @@ const prune = process.argv[6] === "1";
 const headTag = process.argv[7];
 const headShort = process.argv[8];
 const repoRoot = process.argv[9];
+let selfUrlOverride = (process.argv[10] || "").trim();
+const latestTag = (process.argv[11] || "").trim();
 
 const CANON_DOMAINS = { "ssh.github.com": "github.com", "github.com": "github.com" };
 
@@ -157,26 +186,36 @@ function normGitUrl(u) {
 }
 
 // Split an @ref suffix off a git-style spec. A ref @ must appear after the first colon
-// (so "git@host:path" is not misread) and after "://" for protocol URLs.
+// (so "git@host:path" is not misread) and, for protocol URLs, after the authority —
+// the userinfo "@" in "ssh://git@host/..." is never a ref separator.
 function splitRef(spec) {
-  const colon = spec.indexOf(":");
   const at = spec.lastIndexOf("@");
-  if (at > 0 && (colon < 0 || at > colon)) return { url: spec.slice(0, at), ref: spec.slice(at + 1) };
-  return { url: spec, ref: null };
+  if (at <= 0) return { url: spec, ref: null };
+  const scheme = spec.indexOf("://");
+  if (scheme >= 0) {
+    const slash = spec.indexOf("/", scheme + 3);
+    const authEnd = slash < 0 ? spec.length : slash;
+    if (at < authEnd) return { url: spec, ref: null };
+    return { url: spec.slice(0, at), ref: spec.slice(at + 1) };
+  }
+  const colon = spec.indexOf(":");
+  if (colon >= 0 && at < colon) return { url: spec, ref: null };
+  return { url: spec.slice(0, at), ref: spec.slice(at + 1) };
 }
 
 function parseSpec(spec, baseDir) {
-  const out = { kind: "unknown", identity: null, pin: null, spec, display: spec, resolved: null, originIdentity: null, resolvedRoot: null, repoIdentity: null };
+  const out = { kind: "unknown", identity: null, pin: null, spec, display: spec, url: null, localName: null, resolved: null, originIdentity: null, resolvedRoot: null, repoIdentity: null };
   if (spec.startsWith("npm:")) {
     const { url, ref } = splitRef(spec.slice(4));
-    out.kind = "npm"; out.identity = "npm:" + url; out.pin = ref;
+    out.kind = "npm"; out.identity = "npm:" + url; out.pin = ref; out.url = url;
   } else if (spec.startsWith("git:") || /^(https?|ssh|git):\/\//.test(spec)) {
     const { url, ref } = splitRef(spec.startsWith("git:") ? spec.slice(4) : spec);
     const n = normGitUrl(url);
-    if (n) { out.kind = "git"; out.identity = "git:" + n.dom + "/" + n.path; out.pin = ref; }
+    if (n) { out.kind = "git"; out.identity = "git:" + n.dom + "/" + n.path; out.pin = ref; out.url = spec.startsWith("git:") ? "git:" + url : url; }
   } else {
     const abs = path.resolve(baseDir, spec);
     out.kind = "local"; out.identity = "local:" + abs; out.pin = null; out.resolved = abs;
+    try { const pj = JSON.parse(fs.readFileSync(path.join(abs, "package.json"), "utf8")); out.localName = pj.name || null; } catch {}
     try {
       const top = execFileSync("git", ["-C", abs, "rev-parse", "--show-toplevel"], { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
       out.resolvedRoot = top;
@@ -219,6 +258,17 @@ if (!Array.isArray(manifest.packages) || manifest.packages.length === 0) {
 const originN = normGitUrl(originUrl);
 const selfIdentity = originN ? "git:" + originN.dom + "/" + originN.path : null;
 
+// PI_EXTENSIONS_SELF_URL lets a machine pin the self-entry to a non-default transport
+// (for example an https origin). It only replaces the URL; the manifest release tag
+// is still appended, and it must resolve to this same repository.
+if (selfUrlOverride) {
+  const n = normGitUrl(selfUrlOverride.replace(/^git:/, ""));
+  if (!n || ("git:" + n.dom + "/" + n.path) !== selfIdentity) {
+    console.error("apply.sh: ERROR: PI_EXTENSIONS_SELF_URL does not point at this repository (" + originUrl + "): " + selfUrlOverride);
+    process.exit(1);
+  }
+}
+
 const manifestEntries = manifest.packages.map((s) => parseSpec(s, agentDir));
 for (const e of manifestEntries) {
   if (!e.identity) { console.error("apply.sh: ERROR: cannot parse manifest entry: " + e.spec); process.exit(1); }
@@ -226,16 +276,16 @@ for (const e of manifestEntries) {
 const retiredEntries = (Array.isArray(manifest.retired) ? manifest.retired : []).map((s) => parseSpec(s, agentDir));
 const retiredIdentities = new Set(retiredEntries.map((e) => e.identity));
 
-// Release rule (a check, not prose): the monorepo self-entry must pin exactly the version.
+// The monorepo self-entry is identified by this checkout origin; its manifest ref is
+// ignored (the entry is unversioned and apply floats it to PI_EXTENSIONS_LATEST_TAG).
 const self = manifestEntries.find((e) => e.identity === selfIdentity);
 if (!self) {
   console.error("apply.sh: ERROR: no manifest entry matches this repository ('" + originUrl + "') — is this the right checkout?");
   process.exit(1);
 }
-if (self.pin !== manifest.version) {
-  console.error("apply.sh: ERROR: release rule violated — deployment.json version (" + manifest.version + ") != monorepo self-pin (" + String(self.pin) + ")");
-  process.exit(1);
-}
+
+// npm packages declared by the manifest, for retiring a local copy of the same package.
+const manifestNpmNames = new Set(manifestEntries.filter((e) => e.kind === "npm").map((e) => e.identity.slice(4)));
 
 const settings = loadSettings().map((s) => parseSpec(typeof s === "string" ? s : s.source, agentDir));
 
@@ -244,21 +294,33 @@ if (mode === "plan") {
   const matchedSettings = new Set();
   let converged = 1;
   let unpinnedCount = 0;
+  let selfChanged = 0;
 
   const notes = [];
-  if (headTag !== manifest.version) {
-    notes.push("N\tadvisory: this checkout is " + (headShort ? "at " + headShort : "uncommitted") + ", not tagged " + manifest.version + "; applying the manifest as written");
+  const selfHasDedup = settings.some((s) => s.kind === "local" && s.originIdentity === selfIdentity);
+  if (latestTag && !selfHasDedup && headTag !== latestTag) {
+    notes.push("N\tadvisory: this checkout is " + (headShort ? "at " + headShort : "uncommitted") + ", not at the newest release " + latestTag + "; apply moves the self clone");
+  }
+  if (!latestTag) {
+    notes.push("N\tadvisory: could not resolve the newest release tag (offline?); the self-entry is left where it is");
   }
 
   const lines = [];
   manifestEntries.forEach((e, i) => {
-    let action, detail;
+    let action, detail, spec = e.spec;
     if (e === self) {
       const dedup = settings.find((s) => s.kind === "local" && s.originIdentity === e.identity);
       const gitEntry = settings.find((s) => s.kind === "git" && s.identity === e.identity);
+      // Never re-install the self-entry through the manifest hardcoded URL when the
+      // machine already resolves this repo through another one: reuse the installed
+      // URL/scheme (or an explicit PI_EXTENSIONS_SELF_URL override) and rebase the tag,
+      // so an https-installed machine stays https and no second clone appears under
+      // git/ssh.github.com/.
+      const selfUrl = selfUrlOverride || (gitEntry && gitEntry.url) || e.url;
       if (dedup) {
         if (gitEntry) {
           action = "FIX";
+          spec = gitEntry.spec; // remove the exact entry that is present
           detail = "dedup: dev checkout " + dedup.resolved + " satisfies this entry; removing the redundant git package so both are never loaded simultaneously";
           matchedSettings.add(gitEntry);
           converged = 0;
@@ -269,10 +331,22 @@ if (mode === "plan") {
         }
       } else if (gitEntry) {
         matchedSettings.add(gitEntry);
-        if (gitEntry.pin === e.pin) { action = "NOOP"; detail = "already at pin " + e.pin; }
-        else { action = "MOVE"; detail = "move " + String(gitEntry.pin) + " -> " + String(e.pin); converged = 0; }
+        if (latestTag) {
+          spec = selfUrl + "@" + latestTag;
+          if (gitEntry.pin === latestTag) { action = "NOOP"; detail = "already at the newest release " + latestTag; }
+          else { action = "MOVE"; detail = "move " + String(gitEntry.pin) + " -> " + latestTag + " (newest release; keeping " + (selfUrlOverride ? "PI_EXTENSIONS_SELF_URL" : "the installed URL") + ")"; converged = 0; selfChanged = 1; }
+        } else {
+          action = "NOOP";
+          detail = "newest release tag unresolved (offline?); keeping " + String(gitEntry.pin);
+        }
       } else {
-        action = "INSTALL"; detail = "install " + e.spec; converged = 0;
+        if (latestTag) {
+          spec = selfUrl + "@" + latestTag;
+          action = "INSTALL"; detail = "install " + spec + " (newest release)" + (selfUrlOverride ? " (PI_EXTENSIONS_SELF_URL)" : ""); converged = 0; selfChanged = 1;
+        } else {
+          spec = selfUrl;
+          action = "INSTALL"; detail = "install " + spec + " (newest release tag unresolved; installing unpinned)"; converged = 0; selfChanged = 1;
+        }
       }
     } else {
       const cur = settings.find((s) => s.identity === e.identity);
@@ -308,13 +382,25 @@ if (mode === "plan") {
         converged = 0;
       }
     }
-    lines.push("M\t" + i + "\t" + action + "\t" + e.spec + "\t" + detail);
+    lines.push("M\t" + i + "\t" + action + "\t" + spec + "\t" + detail);
   });
 
   settings.forEach((s) => {
     if (matchedSettings.has(s)) return;
     const isSelfSatisfier = s.kind === "local" && s.originIdentity === selfIdentity;
     if (isSelfSatisfier) return; // matched the self entry via dedup, not drift
+    const isLocalNpmDup = s.kind === "local" && s.localName && manifestNpmNames.has(s.localName);
+    if (isLocalNpmDup) {
+      converged = 0;
+      lines.push("R\t" + s.display + "\tlocal copy of the managed npm package " + s.localName + " — apply runs `pi remove`");
+      return;
+    }
+    const isDuplicateGit = s.kind === "git" && s.identity === selfIdentity;
+    if (isDuplicateGit) {
+      converged = 0;
+      lines.push("R\t" + s.display + "\ta duplicate git entry for this repo — apply runs `pi remove`");
+      return;
+    }
     if (retiredIdentities.has(s.identity)) {
       converged = 0;
       lines.push("R\t" + s.display + "\tretired by the manifest — apply runs `pi remove`");
@@ -335,6 +421,7 @@ if (mode === "plan") {
   if (unpinnedCount > 0) {
     lines.push("N\t" + unpinnedCount + " unpinned entr" + (unpinnedCount === 1 ? "y takes" : "ies take") + " the latest release at apply time (`pi update`); --check verifies structure only, so it cannot see a newer upstream release");
   }
+  lines.push("C\t" + selfChanged);
   lines.push("S\t" + converged);
   process.stdout.write(lines.join("\n") + "\n");
 }
@@ -345,10 +432,14 @@ let failures = [];
 manifestEntries.forEach((e) => {
   if (e === self) {
     const dedup = settings.find((s) => s.kind === "local" && s.originIdentity === e.identity);
-    const cur = settings.find((s) => s.kind === "git" && s.identity === e.identity);
-    if (dedup) return;
-    if (!cur) { failures.push("  MISSING: " + e.spec); return; }
-    if (cur.pin !== e.pin) failures.push("  MISMATCH: " + e.spec + " — settings has ref " + String(cur.pin) + ", manifest pins " + e.pin);
+    const gitEntries = settings.filter((s) => s.kind === "git" && s.identity === e.identity);
+    if (dedup) {
+      if (gitEntries.length) failures.push("  DUPLICATE: " + gitEntries.map((s) => s.display).join(", ") + " (redundant git entry beside a dev checkout)");
+      return;
+    }
+    if (gitEntries.length === 0) { failures.push("  MISSING: " + e.spec); return; }
+    if (gitEntries.length > 1) { failures.push("  DUPLICATE: " + gitEntries.map((s) => s.display).join(", ") + " (multiple git entries for this repo)"); return; }
+    if (latestTag && gitEntries[0].pin !== latestTag) failures.push("  MISMATCH: " + e.spec + " — settings has ref " + String(gitEntries[0].pin) + ", newest release is " + latestTag);
   } else {
     const cur = settings.find((s) => s.identity === e.identity);
     if (!cur) { failures.push("  MISSING: " + e.spec); return; }
@@ -357,6 +448,7 @@ manifestEntries.forEach((e) => {
 });
 settings.forEach((s) => {
   if (retiredIdentities.has(s.identity)) { failures.push("  RETIRED: " + s.display + " (still present after apply)"); return; }
+  if (s.kind === "local" && s.localName && manifestNpmNames.has(s.localName)) { failures.push("  DUPLICATE: " + s.display + " (local copy of managed npm package " + s.localName + " still present)"); return; }
   if (s.kind === "local" && s.repoIdentity === selfIdentity && s.resolvedRoot && s.resolvedRoot !== repoRoot) failures.push("  DUPLICATE: " + s.display + " (still present after apply)");
 });
 if (prune) {
@@ -376,7 +468,7 @@ console.log("Post-condition: PASS (" + manifestEntries.length + " manifest entri
 ';
 
 run_planner() {
-  node -e "$NODE_PLANNER" "$1" "$MANIFEST" "$ORIGIN_URL" "$AGENT_DIR" "$SETTINGS" "${PRUNE_FLAG:-0}" "$HEAD_TAG" "$HEAD_SHORT" "$REPO_ROOT"
+  node -e "$NODE_PLANNER" "$1" "$MANIFEST" "$ORIGIN_URL" "$AGENT_DIR" "$SETTINGS" "${PRUNE_FLAG:-0}" "$HEAD_TAG" "$HEAD_SHORT" "$REPO_ROOT" "${PI_EXTENSIONS_SELF_URL:-}" "$LATEST_TAG"
 }
 
 PRUNE_FLAG=0
@@ -387,9 +479,11 @@ PLAN="$(run_planner plan)"
 S_LINE="$(printf '%s\n' "$PLAN" | grep -E '^S	' || true)"
 CONVERGED="$(printf '%s\n' "$S_LINE" | cut -f2 || true)"
 [ -n "$CONVERGED" ] || die "internal error: planner produced no status line"
+C_LINE="$(printf '%s\n' "$PLAN" | grep -E '^C	' || true)"
+SELF_CHANGED="$(printf '%s\n' "$C_LINE" | cut -f2 || true)"
 
 print_plan() {
-  echo "pi-extensions stack: $(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version)' "$MANIFEST")"
+  echo "pi-extensions stack: $(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).version)' "$MANIFEST")${LATEST_TAG:+  (newest release: $LATEST_TAG)}"
   echo "target agent dir:    $AGENT_DIR"
   echo "mode:                $MODE"
   echo
@@ -547,6 +641,15 @@ fi
 if [ "$MODE" = "prune" ]; then
   echo
   echo "removed $removed non-manifest package(s)"
+fi
+
+# The self-entry moved to a newer release: the clone now carries a newer deployment.json
+# and apply.sh. Re-exec once from the updated clone so that manifest converges in this same
+# invocation. PI_EXTENSIONS_NO_REEXEC guards against a tag that keeps moving.
+if [ "${SELF_CHANGED:-0}" = 1 ] && [ "${PI_EXTENSIONS_NO_REEXEC:-}" != 1 ]; then
+  echo
+  echo "self-entry updated to ${LATEST_TAG:-the current ref}; re-running apply.sh from the updated clone to converge the new manifest"
+  exec env PI_EXTENSIONS_NO_REEXEC=1 bash "$SCRIPT_PATH" "$@"
 fi
 
 run_planner post

@@ -6,6 +6,23 @@
 
 ## Amendments
 
+- **v1.2.0 — self-entry floats; model-free bootstrap.** The frozen self-pin is dropped.
+  `deployment.json`'s monorepo entry is now **unversioned**
+  (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`); `version` is just the manifest's
+  release label. `apply.sh` resolves the newest `v*` release tag with `git ls-remote` (model-free),
+  floats the self clone to it — reusing the already-installed URL/scheme so an https machine stays
+  https (override: `PI_EXTENSIONS_SELF_URL`; resolved-tag override: `PI_EXTENSIONS_LATEST_TAG`) —
+  then re-execs itself once from the updated clone (guard: `PI_EXTENSIONS_NO_REEXEC=1`) so the new
+  manifest converges in one invocation. `--check` stays structural but is now offline-tolerant:
+  when the newest tag cannot be resolved a present self-entry is enough. `npm:remote-pi` joins the
+  manifest as the official npm package (we do not fork it; only its relay footer glyph is
+  post-patched by `deploy/lib/fix-remote-pi-glyph.sh`, run by `host-setup.sh`). New
+  `deploy/bootstrap.sh` is a model-free first install: it resolves the newest tag, `pi install`s
+  the monorepo at it, locates the clone via `pi list`, then runs the clone's `deploy/apply.sh` and
+  `deploy/host-setup.sh` (`PI_EXTENSIONS_SKIP_HOST_SETUP=1` skips the latter). Retirements now also
+  cover duplicate git self-entries and local-path copies of a managed npm package. The pre-commit
+  hook enforces the unversioned self-entry; pre-push verifies a pushed `v*` tag equals
+  `deployment.json` `version` only (no self-pin check).
 - **v1.1.1 — retired entries and duplicate checkouts.** `deployment.json` gained a `retired` list
   (`npm:pi-ollama-cloud`, whose fork now ships in this repository). In additive mode `apply.sh`
   now removes manifest-retired entries and local-path entries that point at a *different* checkout

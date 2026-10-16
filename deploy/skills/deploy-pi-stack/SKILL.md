@@ -15,12 +15,39 @@ request.
 1. **Locate the deployment package.** Run `pi list` and find the `assid2/pi-extensions` entry;
    use the path it prints. A git install lives at
    `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/git/<host>/assid2/pi-extensions`, where `<host>` is the
-   literal host of the source URL (`ssh.github.com` for the SSH self-pin, `github.com` for an
+   literal host of the source URL (`ssh.github.com` for the SSH self-entry, `github.com` for an
    `https://github.com/...` origin). Do **not** assume the host — resolve the clone from `pi list`
    (or `git -C <candidate> remote get-url origin`).
 
-2. **Resolve the latest release at run time** (never hardcode a version — this file must not go
-   stale between releases):
+2. **Fresh machine (no `assid2/pi-extensions` entry) — model-free bootstrap.** Use
+   `deploy/bootstrap.sh`. It is plain shell: it resolves the newest release tag with
+   `git ls-remote`, `pi install`s the monorepo at it, locates the clone via `pi list`, and runs
+   the clone's `deploy/apply.sh` and `deploy/host-setup.sh`. No model or provider is needed, so
+   it also works on a pi that has not been set up yet. From a clone:
+
+   ```bash
+   deploy/bootstrap.sh
+   ```
+
+   or on a bare machine straight from GitHub:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/assid2/pi-extensions/main/deploy/bootstrap.sh | bash
+   ```
+
+   `PI_EXTENSIONS_SELF_URL` overrides the install URL/scheme and
+   `PI_EXTENSIONS_SKIP_HOST_SETUP=1` skips the host stage. Relay its full output; then continue
+   at step 7.
+
+3. **Existing install — float the repository to the newest release.** `apply.sh` floats the
+   self-entry itself: it resolves the newest `v*` tag with `git ls-remote` (model-free), moves the
+   self clone to it — reusing the URL/scheme already installed, so an https machine stays https —
+   and re-execs itself once from the updated clone so the new `deployment.json` converges in the
+   same run. No manual `pi install` is normally needed. `PI_EXTENSIONS_LATEST_TAG=<tag>` overrides
+   the resolved tag (offline/CI/tests) and `PI_EXTENSIONS_NO_REEXEC=1` suppresses the re-exec.
+
+   **Manual install path** (only when `apply.sh` cannot resolve the tag or the user must install
+   by hand): resolve the newest tag yourself —
 
    ```bash
    git ls-remote --tags ssh://git@ssh.github.com:443/assid2/pi-extensions.git \
@@ -28,29 +55,29 @@ request.
      | sort -uV | tail -1
    ```
 
-3. **Bootstrap or update the repository (two-step, always pinned — never install *this repo*
-   unpinned):**
-   - Package absent → `pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<tag>`
-   - Package present at a ref older than `<tag>` → same command; it moves the existing clone to
-     the new ref and rewrites the pinned entry in settings.
-   - If `pi install` fails, **stop**: relay the error and do not continue.
-   - **Verify the working tree is actually at `<tag>`.** A settings pin can read `@<tag>` while
-     the clone is a commit or more *past* it (for example `v1.0.2-1-g39ed164`); `apply.sh`
-     compares settings identities, not working-tree content, so it cannot see that drift:
-     ```bash
-     git -C <clone> fetch --tags --quiet
-     [ "$(git -C <clone> describe --tags --exact-match HEAD 2>/dev/null)" = "<tag>" ] \
-       || echo "WARNING: <clone> is not exactly at <tag>; re-clone/reset it before applying"
-     ```
-     If it is not exact, re-clone or hard-reset the clone to `<tag>` and tell the user.
+   then `pi install <existing-url>@<tag>`, reusing the URL/scheme step 1 found (`pi list` /
+   `git -C <clone> remote get-url origin`) — **not** the manifest's SSH default. Installing the
+   SSH URL while an HTTPS entry exists fetches a second clone under `git/ssh.github.com/`. On a
+   first manual install use `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` (or
+   `${PI_EXTENSIONS_SELF_URL}`). If `pi install` fails, **stop** and relay the error.
+
+   Verify the clone is actually at the newest tag: a settings entry can read `@<tag>` while the
+   clone is a commit or more *past* it (for example `v1.0.2-1-g39ed164`); `apply.sh` compares
+   settings identities, not working-tree content, so it cannot see that drift.
+   ```bash
+   git -C <clone> fetch --tags --quiet
+   [ "$(git -C <clone> describe --tags --exact-match HEAD 2>/dev/null)" = "<tag>" ] \
+     || echo "WARNING: <clone> is not exactly at <tag>; re-clone/reset it before applying"
+   ```
+   If it is not exact, re-clone or hard-reset the clone to `<tag>` and tell the user.
 
    > `pi-commandcode-cloud` and `pi-ollama-cloud` are provided by this repository itself
    > (declared in the root `package.json` `pi.extensions`), so the repo update in this step is
    > what installs them. They are not separate manifest packages.
    >
-   > The "always pinned" rule above applies to the monorepo self-entry only. The manifest's
-   > third-party entries are intentionally unversioned and float to their latest release on every
-   > apply (see `reference.md`); a deploy to a pinned tag will report `UNPIN`/`LATEST` for them.
+   > Every entry in `deployment.json` is unversioned — the self-entry floats to the newest release
+   > tag and third-party entries float to their latest release on every apply (see
+   > `reference.md`).
 
 4. **Show the plan first — always, before any change.** Run
 
@@ -63,14 +90,17 @@ request.
 5. **Apply.** `apply.sh` installs/moves the declared entries, refreshes every unpinned
    third-party entry to its latest release (`pi update`), and removes entries the manifest
    explicitly retires — so a run is expected to touch the network and may print `LATEST` /
-   `UNPIN` / `INSTALL-LATEST` / `RETIRE` actions. `RETIRE` covers two cases:
+   `UNPIN` / `INSTALL-LATEST` / `RETIRE` actions. `RETIRE` covers four cases:
    - a package the manifest lists under `retired` (for example `npm:pi-ollama-cloud`, now vendored
      into this repository);
-   - a hand-added local-path entry that points at a *different* checkout of this repository (a
-     duplicate copy that would otherwise double-load its extensions).
+   - a hand-added local-path entry that points at a *different* checkout of this repository;
+   - a duplicate git self-entry (for example an SSH entry left beside an HTTPS one);
+   - a local-path copy of a managed npm package (for example a global `remote-pi` beside
+     `npm:remote-pi`).
 
-   Both are removed with `pi remove` even in additive mode: they are one-time migrations, not
-   unrelated drift. Unrelated packages you installed yourself are still left alone.
+   All would otherwise double-load the same extensions and are removed with `pi remove` even in
+   additive mode: they are one-time migrations, not unrelated drift. Unrelated packages you
+   installed yourself are still left alone.
    - Default: `<clone>/deploy/apply.sh` (additive).
    - Only if the user explicitly asks for an exact mirror ("exactly", "mirror", "replace my
      stack"): `<clone>/deploy/apply.sh --prune`.
@@ -84,8 +114,10 @@ request.
    - the tmux config tmux reads (`~/.tmux.conf` or the XDG path) — `default-terminal "tmux-direct"`,
      `terminal-features[3] "*:RGB"`, `set-environment -g COLORTERM truecolor`;
    - `~/.bashrc` / `~/.zshrc` — extends the stock colour gate to accept `*-direct`;
-   - the remote-pi footer relay glyph (delegated to `deploy/lib/`, guarded against the emoji that
-     renders grey on clients without a colour-emoji font).
+   - the remote-pi footer relay glyph — remote-pi now arrives as the manifest's `npm:remote-pi`
+     (official package, never forked); `deploy/lib/fix-remote-pi-glyph.sh` post-patches only its
+     relay glyph (guarded against the emoji that renders grey on clients without a colour-emoji
+     font).
 
    Every file it touches is backed up once as `<file>.pi-extensions.bak`; it never uses sudo, never
    writes `/etc`. Always tell the user that tmux fixes land on **new** sessions only
@@ -96,8 +128,8 @@ request.
 
 7. **Report.** Relay `apply.sh`'s full output and exit status verbatim — do not summarise it away.
    `Post-condition: PASS` with exit 0 means the machine now runs exactly the declared stack — the
-   repository at its pinned tag, every third-party package at the latest release available at that
-   moment (plus any reported drift). On any non-zero exit: show the per-entry status table and ask the user how
+   repository at the newest release tag, every third-party package at the latest release available
+   at that moment (plus any reported drift). On any non-zero exit: show the per-entry status table and ask the user how
    to proceed.
 
 See `reference.md` (this directory) for the reproducibility contract, what the stack contains, and

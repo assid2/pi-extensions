@@ -2,9 +2,9 @@
 
 Monorepo of pi extensions with a **single-command full-stack deployment**: one install gives you
 the extension stack declared in [`deployment.json`](deployment.json) — including extensions not
-authored here — on any machine running [pi](https://pi.dev). The repository pins *itself* (a
-machine bootstrapped at `vX` stays at `vX` until you explicitly update it); **third-party packages
-are deliberately unpinned and always float to their latest release**.
+authored here — on any machine running [pi](https://pi.dev). The repository tracks its own newest
+release tag (an unpinned self-entry that floats on every apply); **third-party packages are
+likewise unpinned and always float to their latest release**.
 
 ## Prerequisites (target machine)
 
@@ -23,7 +23,7 @@ are deliberately unpinned and always float to their latest release**.
 | [`pi-usage/`](pi-usage/) | `@assid2/pi-usage` — per-account provider quota/balance/spend (footer + `/usage` dialog) and per-agent token usage (TypeScript source, loaded directly) |
 | [`pi-dynamic-workflows/`](pi-dynamic-workflows/) | Patched fork of `@quintinshaw/pi-dynamic-workflows` (per-agent + aggregate tok/s), merged with upstream v3.10.1. Its compiled entrypoint `dist/pi-extension.js` is **committed here** (it is gitignored upstream) so a fresh install loads frozen bytes; rebuild with `npm run build` after source changes |
 | [`pi-ollama-cloud/`](pi-ollama-cloud/) | Patched fork of `pi-ollama-cloud` (upstream `fgrehm/pi-ollama-cloud`, MIT), merged with upstream v0.12.1. The patch makes the package prefix-aware: its status bar, `/ollama-cloud-usage`, and web tools follow **any** active `ollama-*` provider and use that member's own key (TypeScript source, loaded directly) |
-| [`deployment.json`](deployment.json) | The stack manifest: the repository's own self-pin plus the third-party packages to install. Third-party entries are **unversioned** — `apply.sh` takes their latest release on every apply. Portable — no local paths |
+| [`deployment.json`](deployment.json) | The stack manifest: an **unversioned** self-entry plus the third-party packages to install. Every entry is unversioned — `apply.sh` floats the self-entry to the newest release tag and third-party entries to their latest release on every apply. Portable — no local paths |
 | [`deploy/apply.sh`](deploy/apply.sh) | Idempotent converger: brings any pi install in line with `deployment.json` (`--dry-run`, `--check` for CI, `--prune` for an exact mirror) |
 | [`deploy/host-setup.sh`](deploy/host-setup.sh) | Host terminal converger: 24-bit colour for pi + tmux (`terminal.trueColor`, `tmux-direct`, `COLORTERM`, shell colour gate, remote-pi relay glyph) — in-place, idempotent, backed up, `--dry-run`/`--check`/`--revert` |
 | [`pi-commandcode-cloud/`](pi-commandcode-cloud/) | `@assid2/pi-commandcode-cloud` — Command Code model provider (OpenAI/Anthropic-compatible) with `/login`, an opt-in usage footer, and a `pi-usage` adapter (TypeScript source, loaded directly) |
@@ -38,6 +38,24 @@ data is exposed to `pi-usage` through the `commandcode-cloud` adapter id, gated 
 provider. See [`pi-commandcode-cloud/README.md`](pi-commandcode-cloud/README.md).
 
 ## Installing the stack
+
+### Model-free — one command, no provider configured
+
+A brand-new pi has no provider or model configured yet, so it cannot be *asked* to install
+anything. `deploy/bootstrap.sh` closes that catch-22: it is plain shell, resolves the newest
+release tag, `pi install`s the monorepo at it, then runs the installed clone's own
+`deploy/apply.sh` (and `deploy/host-setup.sh` — skip with `PI_EXTENSIONS_SKIP_HOST_SETUP=1`). No
+model or provider is needed at any point. From a clone:
+
+```bash
+deploy/bootstrap.sh
+```
+
+or straight from GitHub on a bare machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/assid2/pi-extensions/main/deploy/bootstrap.sh | bash
+```
 
 ### Easiest — ask your pi
 
@@ -67,19 +85,21 @@ $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 
 ### What it does — and what it never does
 
-- **Additive by default:** installs anything from the manifest that's missing; moves entries to
-  the pinned ref/version when they differ, unpins any entry the manifest leaves unversioned, and
-  refreshes every unpinned third-party entry to its **latest release** (`pi update`). It also
-  removes entries the manifest explicitly **retires** (one-time migrations, e.g. `npm:pi-ollama-cloud`
-  now that the fork is vendored here) and hand-added local-path entries that point at a *different*
-  checkout of this repository. Anything else you already have that is not in the manifest is **left
-  alone** and reported as drift.
+- **Additive by default:** installs anything from the manifest that's missing; floats the
+  repository's own self-entry to the **newest release tag** and every unpinned third-party entry
+  to its **latest release** (`pi update`). It also removes entries the manifest explicitly
+  **retires** (one-time migrations, e.g. `npm:pi-ollama-cloud` now that the fork is vendored
+  here), hand-added local-path entries that point at a *different* checkout of this repository,
+  duplicate git self-entries (an SSH copy left beside an HTTPS one), and local-path copies of a
+  managed npm package (a global `remote-pi` beside `npm:remote-pi`). Anything else you already
+  have that is not in the manifest is **left alone** and reported as drift.
 - **`apply.sh --prune`** additionally removes non-manifest packages → an *exact mirror* of the
   stack. Use only when you deliberately want your stack replaced.
 - **`apply.sh --dry-run`** prints the per-entry plan and changes nothing; **`apply.sh --check`**
-  exits non-zero when the machine is not *structurally* converged (CI-friendly — it verifies that
-  the declared entries are present with the right pins; it cannot see whether a newer upstream
-  release exists, since latest moves).
+  exits non-zero when the machine is not *structurally* converged (CI-friendly). It is
+  offline-tolerant: if the newest release tag can't be resolved, a present self-entry is enough;
+  if it is resolved, the self entry must be at that tag. It cannot see whether a newer upstream
+  release exists for third-party entries, since latest moves.
 - It converges only through pi's own CLI (`pi install` / `pi remove` / `pi update`), touches only the
   `packages` key, and never opens, rewrites, or reorders `auth.json`, model/provider config,
   `AGENTS.md`, or any other file.
@@ -94,25 +114,35 @@ $PI_CODING_AGENT_DIR/git/ssh.github.com/assid2/pi-extensions/deploy/apply.sh
 
 ## Bringing a machine up to the current deployment
 
-The monorepo entry pins *itself* (frozen), so a machine bootstrapped at `vX` stays at `vX` until
-you explicitly update it. Updating the **repository** is a two-step, always-pinned flow — never
-install this repository unpinned. (Third-party entries are a different story: they carry no version,
-and `apply.sh` refreshes them to their latest release every time it runs.)
+One command does it:
 
-1. Resolve the highest release tag at run time:
+```bash
+<clone>/deploy/apply.sh
+```
 
-   ```bash
-   git ls-remote --tags ssh://git@ssh.github.com:443/assid2/pi-extensions.git \
-     | awk -F'\t' '$2 ~ /^refs\/tags\/v[0-9]/ { t = $2; sub(/^refs\/tags\//, "", t); sub(/\^\{\}$/, "", t); print t }' \
-     | sort -uV | tail -1
-   ```
+`apply.sh` resolves the newest `v*` release tag with `git ls-remote`, floats the self clone to it
+(reusing the URL/scheme the machine already has, so an https install stays https; set
+`PI_EXTENSIONS_SELF_URL` to override), then **re-execs itself once** from the updated clone so the
+new `deployment.json` converges in the same invocation. It then refreshes every unpinned
+third-party entry to its latest release. The `deploy-pi-stack` skill performs exactly this when
+you ask your pi.
 
-2. `pi install ssh://git@ssh.github.com:443/assid2/pi-extensions.git@<new-tag>` — moves the
-   existing clone to the new ref and rewrites the pinned settings entry.
-3. Run `deploy/apply.sh` **from the updated clone**, so the new `deployment.json` governs — this
-   step also refreshes every third-party package to its latest release.
+**Manual / offline fallback.** To inspect the tag or work offline, resolve it yourself and install
+it — reusing the URL/scheme the machine already has (from `pi list`, or
+`git -C <clone> remote get-url origin`); on a first install use
+`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`. This moves the existing clone to the new
+ref. Do **not** install the manifest's SSH URL over an existing https entry — that fetches a
+second clone under `git/ssh.github.com/`. Set `PI_EXTENSIONS_LATEST_TAG=<tag>` to override the
+tag `apply.sh` resolves (offline/CI/tests).
 
-The `deploy-pi-stack` skill performs exactly these steps when you ask your pi.
+```bash
+# resolve the newest tag, then install the repository at it through its existing URL
+TAG="$(git ls-remote --tags ssh://git@ssh.github.com:443/assid2/pi-extensions.git \
+  | awk -F'\t' '$2 ~ /^refs\/tags\/v[0-9]/ { t = $2; sub(/^refs\/tags\//, "", t); sub(/\^\{\}$/, "", t); print t }' \
+  | sort -uV | tail -1)"
+pi install <existing-url>@"$TAG"   # e.g. the https URL from `pi list`
+<clone>/deploy/apply.sh
+```
 
 On the development checkout itself, updating is just `git pull` (+ `npm ci && npm run build`
 inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` in pi.
@@ -121,14 +151,16 @@ inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` 
 
 | Extension | Source | Ref |
 |---|---|---|
-| pi-usage + pi-dynamic-workflows + pi-ollama-cloud + pi-commandcode-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | this repository's own release tag (frozen) |
+| pi-usage + pi-dynamic-workflows + pi-ollama-cloud + pi-commandcode-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | newest release tag (floating, auto-tracked) |
 | pi-subagents | `npm:@tintinweb/pi-subagents` | latest |
 | pi-tps | `npm:@monotykamary/pi-tps` | latest |
 | superpowers | `git:github.com/obra/superpowers` | latest |
+| remote-pi | `npm:remote-pi` | latest (official npm package; only its relay footer glyph is post-patched by `deploy/host-setup.sh`) |
 
-Third-party versions are intentionally absent from `deployment.json`: whatever npm or GitHub
-publishes as latest is what a machine converges to on the next `apply.sh`. The repository's own
-tag is the only fixed point in the stack.
+No versions are present in `deployment.json`: `apply.sh` resolves the newest release tag for the
+repository itself and takes whatever npm or GitHub publishes as latest for every third-party
+entry — both float on the next `apply.sh`. `npm:remote-pi` is the official npm package, installed
+as-is (we do not fork it); only its relay footer glyph is post-patched by `deploy/host-setup.sh`.
 
 ## Development
 
@@ -163,10 +195,12 @@ tag is the only fixed point in the stack.
 
 ## Releasing a new deployment
 
-1. Commit the stack changes. In the release commit, `deployment.json`'s `version` field and its
-   monorepo ref pin are the *same new tag* (apply.sh enforces this as a check, not prose).
+1. Commit the stack changes and bump `deployment.json`'s `version` field to the new release label.
+   The monorepo self-entry stays **unversioned** — leave it as
+   `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` (the pre-commit hook enforces this).
 2. If workflows sources changed: `npm ci && npm run build` in `pi-dynamic-workflows/` and
    re-commit the rebuilt `dist/`.
-3. `git tag v1.x.0 && git push origin main v1.x.0`
-4. Machines converge by re-running `deploy/apply.sh` — or just asking their pi. Keep the
-   third-party entries unversioned in `deployment.json`: a release pins only this repository.
+3. `git tag v1.x.0 && git push origin main v1.x.0` (the pre-push hook verifies the tag equals
+   `deployment.json` `version`).
+4. Machines converge by re-running `deploy/apply.sh` — or just asking their pi. A release bumps
+   the manifest's `version` only; every entry stays unversioned.

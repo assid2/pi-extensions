@@ -1,10 +1,11 @@
 {
-  "version": "v1.1.5",
+  "version": "v1.2.0",
   "packages": [
-    "ssh://git@ssh.github.com:443/assid2/pi-extensions.git@v1.1.5",
+    "ssh://git@ssh.github.com:443/assid2/pi-extensions.git",
     "npm:@tintinweb/pi-subagents",
     "npm:@monotykamary/pi-tps",
-    "git:github.com/obra/superpowers"
+    "git:github.com/obra/superpowers",
+    "npm:remote-pi"
   ],
   "hostSetup": {
     "settings": { "terminal.trueColor": true },
