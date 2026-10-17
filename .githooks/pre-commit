@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# pre-commit — never commit a stale dist/ or an inconsistent release manifest.
+#
+# Installed by dev/setup-dev.sh via `git config core.hooksPath .githooks`.
+# Bypass once with `git commit --no-verify` if you know what you are doing.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
+
+# --- pi-dynamic-workflows/dist is a committed build artifact -------------------
+if printf '%s\n' "$STAGED" | grep -qE '^pi-dynamic-workflows/(src/|package\.json|tsconfig)'; then
+	echo "pre-commit: pi-dynamic-workflows sources staged — rebuilding dist/…"
+	(cd pi-dynamic-workflows && npm run build --silent)
+	# dist/ is gitignored inside the sub-project but tracked in this repo: force-add.
+	git add -f -A -- pi-dynamic-workflows/dist
+fi
+
+# --- the monorepo self-entry must stay unversioned -----------------------------
+# apply.sh floats it to the newest release tag, so a baked-in ref is always stale.
+if printf '%s\n' "$STAGED" | grep -qx 'deployment.json'; then
+	node -e '
+		const manifest = JSON.parse(require("node:fs").readFileSync("deployment.json", "utf8"));
+		const self = (manifest.packages || []).find((p) => String(p).includes("assid2/pi-extensions"));
+		if (!self) { console.error("pre-commit: ERROR: deployment.json has no monorepo self-entry"); process.exit(1); }
+		if (self.slice(self.lastIndexOf("/") + 1).includes("@")) {
+			console.error("pre-commit: ERROR: deployment.json self-entry must be unversioned (apply floats it to the newest release tag): " + self);
+			process.exit(1);
+		}
+	' || exit 1
+fi

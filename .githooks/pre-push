@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# pre-push — keep releases honest: dist/ current, tests green, tags pinned.
+#
+# Installed by dev/setup-dev.sh via `git config core.hooksPath .githooks`.
+# Bypass once with `git push --no-verify` if you know what you are doing.
+
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# --- a pushed v* tag must be the version named in that commit ------------------
+# (read stdin first: it is only available while the hook runs, and this check is
+#  cheap, so it fails fast before the build and test passes below)
+while read -r local_ref local_sha remote_ref _remote_sha; do
+	case "${remote_ref:-}" in
+	refs/tags/v*)
+		tag="${remote_ref#refs/tags/}"
+		git show "${local_sha}:deployment.json" >/dev/null 2>&1 || {
+			echo "pre-push: ERROR: ${tag} does not contain deployment.json" >&2
+			exit 1
+		}
+		node -e '
+			const { execFileSync } = require("node:child_process");
+			const [tag, sha] = process.argv.slice(1);
+			const manifest = JSON.parse(execFileSync("git", ["show", sha + ":deployment.json"], { encoding: "utf8" }));
+			if (manifest.version !== tag) {
+				console.error(`pre-push: ERROR: tag ${tag} != deployment.json version ${manifest.version}`);
+				process.exit(1);
+			}
+		' "$tag" "$local_sha" || exit 1
+		echo "pre-push: release ${tag} verified (tag == manifest version)"
+		;;
+	esac
+done
+
+# --- the committed dist/ must match a fresh build ------------------------------
+echo "pre-push: rebuilding pi-dynamic-workflows to verify dist/ is current…"
+(cd pi-dynamic-workflows && npm run build --silent)
+if ! git diff --quiet -- pi-dynamic-workflows/dist; then
+	echo "pre-push: ERROR: pi-dynamic-workflows/dist differs from a fresh build." >&2
+	git --no-pager diff --stat -- pi-dynamic-workflows/dist >&2
+	echo "pre-push: commit the rebuilt dist/ (git add pi-dynamic-workflows/dist) and push again." >&2
+	exit 1
+fi
+
+# --- checks --------------------------------------------------------------------
+echo "pre-push: pi-usage checks…"
+(cd pi-usage && npm run check)
+
+echo "pre-push: pi-commandcode-cloud checks…"
+(cd pi-commandcode-cloud && npm run check)
+(cd pi-commandcode-cloud && npm run lint)
+
+echo "pre-push: pi-dynamic-workflows unit tests…"
+(cd pi-dynamic-workflows && npm run test:unit)
