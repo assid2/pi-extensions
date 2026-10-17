@@ -53,7 +53,7 @@ function splitRef(spec) {
   if (i > 0 && (authEnd < 0 ? s.indexOf(":") < i : i > authEnd)) return { base: s.slice(0, i), ref: s.slice(i + 1) };
   return { base: s, ref: null };
 }
-function key(spec) { return splitRef(spec).base.replace(/\.git$/, ""); }
+function key(spec) { const base = splitRef(spec).base; if (base.startsWith("/") || base.startsWith(".")) return path.resolve(agent, base); return base.replace(/\.git$/, ""); }
 const argv = process.argv.slice(2);
 const cmd = argv[0];
 if (cmd === "--version") { console.log("9.9.9"); process.exit(0); }
@@ -72,7 +72,7 @@ self_entries() { node -e 'const j = require(process.argv[1]); console.log(j.pack
 log_has() { grep -qF "$(printf '%s\t%s' "$1" "$2")" "$FAKE_LOG"; }
 count_log() { grep -cF "$(printf '%s\t' "$1")" "$FAKE_LOG" || true; }
 
-THIRD_PARTY='"npm:@tintinweb/pi-subagents","npm:@monotykamary/pi-tps","git:github.com/obra/superpowers","npm:remote-pi"'
+THIRD_PARTY='"npm:@tintinweb/pi-subagents","npm:@monotykamary/pi-tps","git:github.com/obra/superpowers","npm:remote-pi","npm:pi-atelier"'
 
 # --- tests ------------------------------------------------------------------
 test_local_npm_duplicate_retired() {
@@ -85,6 +85,17 @@ test_local_npm_duplicate_retired() {
   log_has remove "$rp" || fail "local remote-pi copy not retired (log: $(grep remove "$FAKE_LOG" || true))"
   log_has install "npm:remote-pi" || fail "managed npm:remote-pi not installed"
   run_apply --check >/dev/null 2>&1 || fail "--check not converged after retiring the local copy"
+}
+
+test_relative_local_npm_duplicate_retired() {
+  echo "A9 a relative local npm copy is retired by its resolved absolute path"
+  new_env
+  local rp="$ENV_DIR/fake-remote-pi"; mkdir -p "$rp"
+  printf '{"name":"remote-pi","version":"0.0.0"}\n' > "$rp/package.json"
+  seed_settings "$(node -e 'console.log(JSON.stringify(["https://github.com/assid2/pi-extensions.git@" + process.argv[2], "../fake-remote-pi", "npm:@tintinweb/pi-subagents", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers", "npm:pi-atelier"]))' "$rp" "$VERSION")"
+  run_apply > "$ENV_DIR/apply.out" 2>&1 || fail "apply exited non-zero: $(cat "$ENV_DIR/apply.out")"
+  log_has remove "$rp" || fail "relative local copy not retired by resolved path (log: $(grep remove "$FAKE_LOG" || true))"
+  log_has install "npm:remote-pi" || fail "managed npm:remote-pi not installed"
 }
 
 test_bad_override_rejected() {
@@ -175,8 +186,9 @@ test_unpinned_ssh_url_recognized() {
   new_env
   seed_settings "[\"ssh://git@ssh.github.com:443/assid2/pi-extensions.git\",$THIRD_PARTY]"
   run_apply --dry-run > "$ENV_DIR/plan.out" 2>&1 || fail "dry-run failed"
-  if grep -qF '[INSTALL' "$ENV_DIR/plan.out"; then fail "unpinned ssh self entry not recognized as the same repo: $(cat "$ENV_DIR/plan.out")"; fi
-  grep -q '\[MOVE' "$ENV_DIR/plan.out" || fail "expected MOVE for the unpinned self entry"
+  grep -qE '^  \[MOVE[[:space:]]+\] ssh://git@ssh\.github\.com' "$ENV_DIR/plan.out" \
+    || fail "unpinned ssh self entry not recognized as the same repo: $(cat "$ENV_DIR/plan.out")"
+  if grep -qE '^  \[INSTALL[[:space:]]+\] ssh://' "$ENV_DIR/plan.out"; then fail "planned a fresh clone instead of moving the existing entry"; fi
 }
 
 test_https_bump_stays_https
@@ -187,6 +199,7 @@ test_git_duplicate_self_retired
 test_git_shorthand_self_reused
 test_bad_override_rejected
 test_local_npm_duplicate_retired
+test_relative_local_npm_duplicate_retired
 
 if [ "$FAILS" -eq 0 ]; then
   echo "PASS (apply)"

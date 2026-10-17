@@ -19,10 +19,12 @@ import { loadConfig, type UsageConfig } from "./config.ts";
 import {
   AccountRegistry,
   buildAccounts,
+  loadAuthProviderIds,
   registerAliasProviders,
   registerOllamaNamespaceProviders,
   resolveCredential,
 } from "./accounts/registry.ts";
+import { addSpecializedAccounts } from "./accounts/auto.ts";
 import { resolveAdapter } from "./adapters/index.ts";
 import { fetchWithBackoff } from "./adapters/http.ts";
 import { SessionScanner } from "./agents/scanner.ts";
@@ -30,6 +32,7 @@ import { AgentEventTracker } from "./agents/events.ts";
 import { buildSessionTree } from "./agents/tree.ts";
 import { computeRollup } from "./agents/rollup.ts";
 import { renderFooterStatus } from "./ui/footer.ts";
+import { AtelierPanels, buildUsagePanel, USAGE_PANEL_ID } from "./ui/atelier.ts";
 import { UsageDialog, type AccountView, type UsageView } from "./ui/dialog.ts";
 import { opencodeGoProviderConfig } from "./providers/opencode-go.ts";
 import type { Account, ProviderUsage } from "./types.ts";
@@ -71,6 +74,9 @@ export default function (pi: ExtensionAPI): void {
   const scanner = new SessionScanner(path.join(agentDir, "sessions"));
   const tracker = new AgentEventTracker();
   const usageByAccount = new Map<string, ProviderUsage>();
+  // One footer host (Atelier) renders this panel; pi-usage only contributes data,
+  // so it never races another extension for pi's single setFooter slot.
+  const atelier = new AtelierPanels(pi.events, EXTENSION_ID);
 
   function displayName(ctx: ExtensionContext, providerId: string): string {
     try {
@@ -127,10 +133,24 @@ export default function (pi: ExtensionAPI): void {
     return results;
   }
 
+  /**
+   * Publish the SELECTED account's usage as Atelier's one contributed panel: the
+   * account is the one behind the active model, so the panel follows a model or
+   * provider switch and the lanes come from that provider's adapter. No panel
+   * when the account has nothing (yet) to show.
+   */
+  function syncPanel(): void {
+    const account = activeAccount;
+    const panel = account ? buildUsagePanel(account, usageByAccount.get(account.id), Date.now()) : undefined;
+    if (panel) atelier.upsert(panel);
+    else atelier.remove(USAGE_PANEL_ID);
+  }
+
   async function buildView(ctx: ExtensionContext): Promise<UsageView> {
     const nowMs = Date.now();
     scanner.refresh();
     const accounts = await fetchAllAccounts(ctx, nowMs);
+    if (ctx.mode === "tui") syncPanel();
     const agents = buildSessionTree(scanner, ctx.sessionManager.getSessionFile(), tracker, nowMs);
     const rollup = computeRollup(scanner, registry ?? new AccountRegistry([]), config.rollupWindow, nowMs, (id) =>
       displayName(ctx, id),
@@ -174,12 +194,15 @@ export default function (pi: ExtensionAPI): void {
   async function runPoll(): Promise<void> {
     const ctx = currentContext;
     const sessionSignal = sessionController?.signal;
-    if (!ctx || !sessionSignal || sessionSignal.aborted || ctx.mode !== "tui" || !activeAccount) {
+    if (!ctx || !sessionSignal || sessionSignal.aborted || ctx.mode !== "tui") {
       updateStatus();
       return;
     }
-    await fetchAccount(ctx, activeAccount, Date.now());
+    // Only the selected account is polled: it is the one every usage surface
+    // shows, and the dialog fetches the rest on demand when it is opened.
+    if (activeAccount) await fetchAccount(ctx, activeAccount, Date.now());
     if (sessionSignal.aborted) return;
+    syncPanel();
     updateStatus();
   }
 
@@ -220,6 +243,14 @@ export default function (pi: ExtensionAPI): void {
         console.warn(`[${EXTENSION_ID}] opencode-go provider registration failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+
+    // Auto-track providers we are already logged into (ollama-*, commandcode-cloud,
+    // opencode-go, ...) so their quota bars appear without a usage.json entry.
+    const autoIds = new Set<string>([
+      ...loadAuthProviderIds(agentDir).ids,
+      ...ctx.modelRegistry.getRegisteredProviderIds(),
+    ]);
+    addSpecializedAccounts(registry, autoIds, config, (id) => displayName(ctx, id));
 
     updateActiveAccount(ctx);
   }
@@ -277,6 +308,7 @@ export default function (pi: ExtensionAPI): void {
     pollQueued = false;
     if (pollTimer) clearInterval(pollTimer);
     pollTimer = undefined;
+    atelier.clear();
     if (ctx.mode === "tui") ctx.ui.setStatus(STATUS_KEY, undefined);
     currentContext = undefined;
   });
@@ -284,6 +316,10 @@ export default function (pi: ExtensionAPI): void {
   pi.on("model_select", (event, ctx) => {
     currentContext = ctx;
     updateActiveAccount(ctx);
+    // Drop the previous account's reading before the new one loads, so no
+    // surface ever shows another provider's quota.
+    syncPanel();
+    updateStatus();
     void poll();
   });
 

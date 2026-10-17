@@ -392,7 +392,7 @@ if (mode === "plan") {
     const isLocalNpmDup = s.kind === "local" && s.localName && manifestNpmNames.has(s.localName);
     if (isLocalNpmDup) {
       converged = 0;
-      lines.push("R\t" + s.display + "\tlocal copy of the managed npm package " + s.localName + " — apply runs `pi remove`");
+      lines.push("R\t" + s.resolved + "\tlocal copy of the managed npm package " + s.localName + " — apply runs `pi remove`");
       return;
     }
     const isDuplicateGit = s.kind === "git" && s.identity === selfIdentity;
@@ -409,7 +409,7 @@ if (mode === "plan") {
     const isDuplicateCheckout = s.kind === "local" && s.repoIdentity === selfIdentity && s.resolvedRoot && s.resolvedRoot !== repoRoot;
     if (isDuplicateCheckout) {
       converged = 0;
-      lines.push("R\t" + s.display + "\tduplicate checkout of this repo (" + s.resolvedRoot + ") — apply runs `pi remove`");
+      lines.push("R\t" + s.resolved + "\tduplicate checkout of this repo (" + s.resolvedRoot + ") — apply runs `pi remove`");
       return;
     }
     if (prune) { matchedSettings.add(s); converged = 0; }

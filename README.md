@@ -154,6 +154,7 @@ inside `pi-dynamic-workflows/`, since its entrypoint is compiled) and `/reload` 
 | pi-usage + pi-dynamic-workflows + pi-ollama-cloud + pi-commandcode-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | newest release tag (floating, auto-tracked) |
 | pi-subagents | `npm:@tintinweb/pi-subagents` | latest |
 | pi-tps | `npm:@monotykamary/pi-tps` | latest |
+| pi-atelier | `npm:pi-atelier` | latest (footer/status-rail + sidebar host) |
 | superpowers | `git:github.com/obra/superpowers` | latest |
 | remote-pi | `npm:remote-pi` | latest (official npm package; only its relay footer glyph is post-patched by `deploy/host-setup.sh`) |
 
@@ -161,6 +162,22 @@ No versions are present in `deployment.json`: `apply.sh` resolves the newest rel
 repository itself and takes whatever npm or GitHub publishes as latest for every third-party
 entry — both float on the next `apply.sh`. `npm:remote-pi` is the official npm package, installed
 as-is (we do not fork it); only its relay footer glyph is post-patched by `deploy/host-setup.sh`.
+
+### Footer and usage interop
+
+Pi has exactly **one** custom footer slot (`setFooter`) and one editor slot
+(`setEditorComponent`); the last extension to set them wins. `pi-atelier` is the single host for
+both, and `pi-status-footer` — the former second footer owner that silently fought it — is
+**retired** by the manifest and removed on apply, so the two never coexist. `pi-usage` does not
+compete for the slot: it contributes one sidebar panel for the **selected** provider+account (the
+active model's account, with lanes from that provider's adapter) to Atelier over the public
+`pi-atelier:sidebar-panels` channel (no import, so it still works when Atelier is absent). There
+are no per-account panels and no hard-coded names, so it scales to any provider or number of
+accounts, and the stable panel id keeps a user's show/hide choice across model switches. New
+panels start **hidden** — enable it in `/atelier` → Settings → Display. Its footer `setStatus`
+line is the always-on fallback; Atelier renders contributed statuses without colour, but the
+quota meters survive. Auto-tracked accounts (`ollama-*`, `commandcode-cloud`, `opencode-go`, …)
+need no `usage.json`.
 
 ## Development
 

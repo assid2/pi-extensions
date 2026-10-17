@@ -27,7 +27,19 @@ pi install npm:@assid2/pi-usage   # or: pi install /path/to/pi-usage
 ## What you get
 
 - **Footer status line** — the active account's quota lanes + live subagent
-  count: `Go(personal) 5h ██░░ 43% ⟳ 2h · W 21% · M 8% · ⧉3`
+  count (bars included; Atelier renders contributed statuses without colour, but
+  the meters survive):
+  `Go(personal) 5h ██░░ 43% ⟳ 2h W 21% M 8% ⧉3`
+- **Atelier panel** — the **selected** account's usage (quota lanes as
+  label/value rows with progress bars, plus balance and monthly spend),
+  contributed to `pi-atelier` over the public `pi-atelier:sidebar-panels`
+  channel without importing it. It follows the active model's provider+account,
+  so `ollama-X` shows X's windows and `ollama-Y` shows Y's, and the lanes come
+  from that provider's adapter — no per-account panels and no hard-coded
+  names, so it scales to any provider or number of accounts. Enable it in
+  `/atelier` → Settings → Display (new panels start hidden; the panel id is
+  stable, so the choice survives a model switch). The footer line is the
+  always-on fallback.
 - **`/usage`** — interactive dialog with three sections:
   1. **This session** — agent tree (main + subagents, per-agent usage)
   2. **Accounts** — per-account quota lanes / balance / spend
@@ -55,6 +67,13 @@ pi install npm:@assid2/pi-usage   # or: pi install /path/to/pi-usage
 ```
 
 ### Accounts
+
+Credentialed providers that resolve to a specialized usage adapter —
+`ollama-*` (including `ollama-assid2`), `commandcode-cloud`, `opencode-go`, and
+the other known providers — are tracked **automatically**: `/login` and their
+usage appears, no `usage.json` entry required. `usage.json` is only needed for
+**extra aliases** (multiple keys of the same provider), env-bound accounts, or
+generic/custom endpoints.
 
 - The **first** entry per provider is its default account (no alias).
 - **Extra accounts** declare an `alias` — a clone provider id. The extension

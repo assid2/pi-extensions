@@ -10,6 +10,7 @@ repository. It declares:
 | this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | newest release tag (floating; entry is unversioned) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `pi-dynamic-workflows` (dynamic workflows, patched fork of `@quintinshaw/pi-dynamic-workflows`), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
 | `npm:@tintinweb/pi-subagents` | latest (unpinned) | subagent orchestration tools |
 | `npm:@monotykamary/pi-tps` | latest (unpinned) | tokens/second display |
+| `npm:pi-atelier` | latest (unpinned) | footer/status-rail + sidebar host; the single owner of pi's one custom footer and editor slot |
 | `git:github.com/obra/superpowers` | latest (unpinned) | superpowers skill suite |
 | `npm:remote-pi` | latest (unpinned) | official npm package (never forked); only its relay footer glyph is post-patched by `host-setup.sh` |
 
@@ -34,8 +35,10 @@ npm package, installed as-is (never forked); only its relay footer glyph is post
 - **Our modified extensions ship in-tree** (`pi-usage`, `pi-dynamic-workflows`, `pi-ollama-cloud`,
   `pi-commandcode-cloud`), loaded from the monorepo and tracked by its newest release tag. The
   external published `npm:pi-ollama-cloud` is **retired** and removed on apply, so it cannot
-  double-load alongside the vendored prefix-aware fork. `npm:remote-pi` is the official npm
-  package — we do not fork it; only its relay footer glyph is post-patched by `host-setup.sh`.
+  double-load alongside the vendored prefix-aware fork; `npm:pi-status-footer` is likewise
+  retired — with `pi-atelier` hosting the one custom footer it would silently fight it for the
+  single `setFooter` slot. `npm:remote-pi` is the official npm package — we do not fork it; only
+  its relay footer glyph is post-patched by `host-setup.sh`.
 
 ## The deployment contract
 
@@ -49,7 +52,8 @@ npm package, installed as-is (never forked); only its relay footer glyph is post
   them unpinned and runs `pi update` for each one on every apply, so they always take the latest
   release. Never add a version to a third-party entry unless you deliberately want to freeze it.
 - **Retired entries.** `deployment.json` may list `retired` package specs (for example
-  `npm:pi-ollama-cloud`, which moved into this repository as a vendored fork). `apply.sh` removes
+  `npm:pi-ollama-cloud`, which moved into this repository as a vendored fork, and
+  `npm:pi-status-footer`, the former competing footer owner). `apply.sh` removes
   any matching settings entry with `pi remove`, even in additive mode — retired entries are
   one-time migrations, not unrelated drift. The same self-healing covers: a local-path entry that
   points at a *different* checkout of this repository (identified by the checkout's repository
@@ -108,6 +112,38 @@ npm package, installed as-is (never forked); only its relay footer glyph is post
 - Preflight (clear error + non-zero exit, never a stack trace): `pi` on PATH and loadable;
   `git`/`node` present; `deployment.json` parses; the clone contains a root `package.json` and
   every path its `pi` manifest declares.
+
+## Footer and usage dashboards
+
+Pi exposes exactly **one** custom footer slot (`setFooter`) and one editor slot
+(`setEditorComponent`); the **last** extension to set them wins and earlier setters silently lose.
+Only one extension may own them at a time:
+
+- **`pi-atelier` is the host.** It is the stack's footer/status-rail and sidebar owner, and the
+  only extension that sets the shared footer/editor slots.
+- **`pi-status-footer` is retired.** It was the other `setFooter` owner and fought Atelier for the
+  slot; the manifest lists it under `retired`, so `apply.sh` removes it on every apply and the two
+  never coexist.
+- **`pi-usage` contributes, it does not compete.** It publishes **one** sidebar panel for the
+  **selected** provider+account — the account behind the active model, with lanes taken from that
+  provider's adapter — under the stable id `assid2:usage` (title = account name: quota lanes as
+  label/value rows with a progress bar, plus balance and monthly spend; `rows` is the plain-text
+  fallback for older hosts) over the public **`pi-atelier:sidebar-panels`** channel (protocol v1).
+  The stable id replaces the panel in place when the model or provider switches, so the user's
+  show/hide choice survives it; there are no per-account panels and no hard-coded names. It does
+  **not** import Atelier, so it still works when Atelier is absent.
+- **Contributed panels start hidden.** This is Atelier's documented behavior for contributed
+  panels; the user enables them in `/atelier` → Settings → Display.
+- **`setStatus` is the fallback.** `pi-usage` keeps its compact footer status line for the built-in
+  footer, so usage is visible (in Atelier's `statuses` segment) even before the panels are enabled.
+- **Accounts are auto-tracked.** Every provider that resolves to a specialized usage adapter and
+  that the user is logged into — `ollama-*` (including `ollama-assid2`), `commandcode-cloud`,
+  `opencode-go`, and the other known providers — appears without a `usage.json`. The file is only
+  needed for extra aliases, env-bound accounts, or generic/custom endpoints.
+- **The in-extension `usageStatus` bars are optional.** `pi-ollama-cloud` and
+  `pi-commandcode-cloud` still offer their opt-in compact usage bars (`usageStatus`, default off)
+  for the built-in footer; under Atelier they are redundant — they only concatenate into the muted
+  `statuses` line. Leave them off when Atelier is the host.
 
 ## Host terminal setup (`host-setup.sh`)
 

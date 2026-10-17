@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Atelier: contribute a single sidebar panel for the **selected**
+  provider+account (the active model's account, lanes from that provider's
+  adapter) instead of one panel per account — no per-account sections, no
+  hard-coded names, so it scales to any provider or number of accounts. The
+  panel id is stable, so a user's show/hide choice survives a model switch, and
+  only the active account is polled (the `/usage` dialog still fetches the
+  rest).
 - Treat `ollama-*` provider ids as a namespace: every credential-bearing
   `ollama-*` key in `auth.json` is auto-registered as a clone of `ollama-cloud`
   (live catalog, own `models-store.json` entry, own quota line), and any

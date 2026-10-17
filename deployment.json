@@ -5,7 +5,8 @@
     "npm:@tintinweb/pi-subagents",
     "npm:@monotykamary/pi-tps",
     "git:github.com/obra/superpowers",
-    "npm:remote-pi"
+    "npm:remote-pi",
+    "npm:pi-atelier"
   ],
   "hostSetup": {
     "settings": { "terminal.trueColor": true },
@@ -14,6 +15,7 @@
     "remotePiGlyphPatch": { "version": 1, "verifiedAgainst": "0.7.0" }
   },
   "retired": [
-    "npm:pi-ollama-cloud"
+    "npm:pi-ollama-cloud",
+    "npm:pi-status-footer"
   ]
 }

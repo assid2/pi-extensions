@@ -132,5 +132,10 @@ request.
    at that moment (plus any reported drift). On any non-zero exit: show the per-entry status table and ask the user how
    to proceed.
 
+   Also tell the user: `pi-atelier` now owns pi's single custom footer/editor slot, and
+   `pi-usage` contributes one sidebar panel for the **selected** provider+account to it. That panel
+   starts **hidden** — enable it in `/atelier` → Settings → Display. The manifest **retires** `pi-status-footer`
+   (the former competing footer owner), so it is removed on apply.
+
 See `reference.md` (this directory) for the reproducibility contract, what the stack contains, and
 troubleshooting.
