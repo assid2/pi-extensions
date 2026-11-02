@@ -1,0 +1,14 @@
+repository: https://github.com/opensec-git/opensec-pi-subagents.git
+branch: master
+commit: 76fd35c4a5e814251badd1f7f523557d3ea7fcf9
+version: 0.20.9
+license: Apache-2.0
+vendored_at: 2026-11-02T14:19:40Z
+
+This directory is a pristine source snapshot. Do not edit it directly.
+TPS changes live in patches/opensec-pi-subagents/0001-tps.patch and are
+applied to a temporary copy by scripts/opensec-subagents/update.sh.
+
+The npm package (opensec-pi-subagents) ships only a prebuilt Bun bundle; it
+has no source. The GitHub tree above is the newest publicly available source
+and is what the patch is written against.

@@ -9,8 +9,8 @@ provider usage and per-agent token usage to Pi.
 
 1. **Provider usage, per account** — quota lanes / balance / spend for every
    account, including multiple accounts of the same provider.
-2. **Agent usage** — the main session and every subagent (pi-subagents,
-   pi-dynamic-workflows), each of which may run on its own provider/account:
+2. **Agent usage** — the main session and every subagent (opensec-pi-subagents,
+   including workflow-spawned agents), each of which may run on its own provider/account:
    tokens in/out/cache, cost, status, duration.
 3. **New providers** — `ollama-cloud`, `opencode-go` (+ `opencode` zen).
 4. **Custom/local providers** — anything without a usage endpoint (local
@@ -46,7 +46,8 @@ base id maps to the `ollama-cloud` usage adapter.
   `parentSession` header (the parent's file path); the scanner walks that
   graph and sums per-message `usage` (assistant + tool + compaction)
   incrementally (byte-offset tails, mtime prefilter). Live status from the
-  in-process event bus (`subagents:*`, `pi-dynamic-workflows:lifecycle`).
+  in-process event bus (`subagents:*`; the legacy `pi-dynamic-workflows:lifecycle`
+  channel is still understood).
 
 ### Adapter tiers
 

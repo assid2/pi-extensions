@@ -1,8 +1,10 @@
 /**
  * Live agent tracking from the pi event bus.
  *
- * pi-subagents (in-process) emits `subagents:*` events; pi-dynamic-workflows
- * emits `pi-dynamic-workflows:lifecycle`. Both run in the SAME process as the
+ * opensec-pi-subagents (in-process) emits `subagents:*` events; the retired
+ * pi-dynamic-workflows emitted `pi-dynamic-workflows:lifecycle`, which is still
+ * understood so a machine that has not converged yet keeps reporting. Both run
+ * in the SAME process as the
  * main session, so a `pi.events` subscription in this extension sees them.
  * Payloads are handled defensively — versions drift, and an unknown shape
  * must never break the usage extension.

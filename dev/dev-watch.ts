@@ -6,12 +6,13 @@
  *
  * What it does
  *   - watches the live checkout that ~/.pi/agent/settings.json points at
- *   - a change under pi-dynamic-workflows/src (or its package.json/tsconfig) runs
- *     `npm run build` (tsc) so the committed dist/ is always current
+ *   - a change under vendor/opensec-pi-subagents/src or the TPS patch runs
+ *     scripts/opensec-subagents/update.sh: apply patch, typecheck, compile and
+ *     bundle, so the committed opensec-pi-subagents/ artifact is always current
  *   - then hot-reloads pi through the /dev-reload command, so the running session
  *     immediately uses the new extension code (no manual /reload)
  *   - a failed build is reported and the current, working code stays loaded
- *   - on session start it builds once if dist/ is older than src/ (offline edits)
+ *   - on session start it builds once if the artifact is older than its inputs
  *
  * Env
  *   PI_EXTENSIONS_DEV_ROOT    repo root to watch (default: resolved from this file)
@@ -39,38 +40,54 @@ function defaultRoot(): string {
 }
 
 const ROOT = process.env.PI_EXTENSIONS_DEV_ROOT ?? defaultRoot();
-const WORKFLOWS = path.join(ROOT, "pi-dynamic-workflows");
-const WORKFLOWS_SRC = path.join(WORKFLOWS, "src");
-const WORKFLOWS_DIST = path.join(WORKFLOWS, "dist");
-const DIST_ENTRY = path.join(WORKFLOWS_DIST, "pi-extension.js");
+const VENDOR = path.join(ROOT, "vendor", "opensec-pi-subagents");
+const VENDOR_SRC = path.join(VENDOR, "src");
+const PATCH_DIR = path.join(ROOT, "patches", "opensec-pi-subagents");
+const PATCH_FILE = path.join(PATCH_DIR, "0001-tps.patch");
+const BUILT = path.join(ROOT, "opensec-pi-subagents");
+const DIST_ENTRY = path.join(BUILT, "dist-bun", "index.js");
+const UPDATE_SCRIPT = path.join(ROOT, "scripts", "opensec-subagents", "update.sh");
 const COMMANDCODE = path.join(ROOT, "pi-commandcode-cloud");
 
 const DEBOUNCE_MS = 800;
-const BUILD_TIMEOUT_MS = 180_000;
+const BUILD_TIMEOUT_MS = 600_000;
 const SWALLOW_DIST_MS = 1_500;
 const RELOAD_COOLDOWN_MS = 2_000;
 
 const ENABLED = process.env.PI_EXTENSIONS_DEV_WATCH !== "0";
 const QUIET = process.env.PI_EXTENSIONS_DEV_QUIET === "1";
 
+type WatchTarget = {
+	dir: string;
+	recursive: boolean;
+	/** true (default) = run update.sh; false = reload only (TypeScript/skills). */
+	build?: boolean;
+	match?: RegExp;
+	/** non-recursive package root: only these names trigger a rebuild. */
+	buildOnly?: boolean;
+};
+
 /** Directories whose changes matter. Non-recursive entries only report their own children. */
-const WATCH_TARGETS: ReadonlyArray<{ dir: string; recursive: boolean; buildOnly?: boolean; match?: RegExp }> = [
-	{ dir: path.join(ROOT, "pi-usage", "extensions"), recursive: true },
-	// pi-commandcode-cloud is loaded straight from TypeScript: any root-level
-	// source edit hot-reloads without a build step.
-	{ dir: COMMANDCODE, recursive: false, match: /\.(ts|json)$/ },
-	{ dir: WORKFLOWS_SRC, recursive: true },
-	{ dir: path.join(WORKFLOWS, "skills"), recursive: true },
-	{ dir: WORKFLOWS_DIST, recursive: true },
-	{ dir: path.join(ROOT, "deploy", "skills"), recursive: true },
-	// package.json / tsconfig*.json live at the package root and trigger a build
-	{ dir: WORKFLOWS, recursive: false, buildOnly: true },
+const WATCH_TARGETS: ReadonlyArray<WatchTarget> = [
+	// Loaded straight from TypeScript: edit -> hot reload, no build step.
+	{ dir: path.join(ROOT, "pi-usage", "extensions"), recursive: true, build: false },
+	{ dir: COMMANDCODE, recursive: false, build: false, match: /\.(ts|json)$/ },
+	// The TPS patch inputs: vendored source + the patch itself.
+	{ dir: VENDOR_SRC, recursive: true },
+	{ dir: PATCH_DIR, recursive: false, match: /^0001-tps\.patch$/ },
+	// Build output: a build rewrites it, so swallow those events (see onChange).
+	{ dir: BUILT, recursive: true },
+	// package.json / tsconfig*.json live at the vendor root and trigger a build.
+	{ dir: VENDOR, recursive: false, buildOnly: true },
+	// Skills reload without a build step.
+	{ dir: path.join(ROOT, "skills"), recursive: true, build: false },
+	{ dir: path.join(ROOT, "deploy", "skills"), recursive: true, build: false },
 ];
 
 const BUILD_TRIGGER_NAME = /^(package\.json|tsconfig[^/\\]*\.json)$/;
 
-function isInsideDist(target: string): boolean {
-	const rel = path.relative(WORKFLOWS_DIST, target);
+function isInside(target: string, dir: string): boolean {
+	const rel = path.relative(dir, target);
 	return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
@@ -97,18 +114,27 @@ function newestMtimeMs(dir: string): number {
 	return newest;
 }
 
-function isDistStale(): boolean {
+function mtimeOf(file: string): number {
 	try {
-		return newestMtimeMs(WORKFLOWS_SRC) > fs.statSync(DIST_ENTRY).mtimeMs;
+		return fs.statSync(file).mtimeMs;
 	} catch {
-		return true;
+		return 0;
 	}
+}
+
+function isDistStale(): boolean {
+	const inputs = Math.max(newestMtimeMs(VENDOR_SRC), mtimeOf(PATCH_FILE));
+	const built = mtimeOf(DIST_ENTRY);
+	return built === 0 || inputs > built;
 }
 
 export default function devWatch(pi: ExtensionAPI) {
 	let watchers: fs.FSWatcher[] = [];
 	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 	let building = false;
+	/** A change is pending (build or reload). */
+	let dirty = false;
+	/** The pending change needs a rebuild (not a reload-only skill edit). */
 	let dirtySource = false;
 	let swallowDistUntil = 0;
 	let lastReloadAt = 0;
@@ -153,27 +179,35 @@ export default function devWatch(pi: ExtensionAPI) {
 		});
 	}
 
+	/** Apply the patch and rebuild the committed artifact. */
+	async function rebuild(): Promise<boolean> {
+		try {
+			const result = await pi.exec("bash", [UPDATE_SCRIPT], {
+				cwd: ROOT,
+				timeout: BUILD_TIMEOUT_MS,
+			});
+			const ok = result.code === 0;
+			if (!ok) report("dev-watch: build FAILED — keeping the previously built code", result.stderr || result.stdout);
+			return ok;
+		} catch (error) {
+			report("dev-watch: build FAILED — keeping the previously built code", String(error));
+			return false;
+		} finally {
+			// update.sh replaces the built dir; ignore those watcher events so they don't loop.
+			swallowDistUntil = Date.now() + SWALLOW_DIST_MS;
+		}
+	}
+
 	async function cycle() {
-		if (building) return;
+		if (building || !dirty) return;
 		building = true;
 		const needBuild = dirtySource;
+		dirty = false;
 		dirtySource = false;
 		let ok = true;
 		try {
-			if (needBuild) {
-				const result = await pi.exec("npm", ["run", "build", "--silent"], {
-					cwd: WORKFLOWS,
-					timeout: BUILD_TIMEOUT_MS,
-				});
-				ok = result.code === 0;
-				if (!ok) report("dev-watch: build FAILED — keeping the previously built code", result.stderr || result.stdout);
-			}
-		} catch (error) {
-			ok = false;
-			report("dev-watch: build FAILED — keeping the previously built code", String(error));
+			if (needBuild) ok = await rebuild();
 		} finally {
-			// tsc just rewrote dist/; ignore those watcher events so they don't loop.
-			swallowDistUntil = Date.now() + SWALLOW_DIST_MS;
 			building = false;
 		}
 		if (ok) requestReload(needBuild ? "rebuilt — reloading pi" : "change detected — reloading pi");
@@ -187,26 +221,20 @@ export default function devWatch(pi: ExtensionAPI) {
 		}, DEBOUNCE_MS);
 	}
 
-	function onChange(
-		target: { dir: string; recursive: boolean; buildOnly?: boolean; match?: RegExp },
-		filename: string | Buffer | null,
-	) {
+	function onChange(target: WatchTarget, filename: string | Buffer | null) {
 		const name = filename ? filename.toString() : "";
 		if (!target.recursive) {
-			// The workflows package root only reacts to files that require a rebuild;
-			// other non-recursive targets (pi-commandcode-cloud) reload on source edits.
 			if (target.buildOnly) {
 				if (!BUILD_TRIGGER_NAME.test(name)) return;
 			} else if (target.match && !target.match.test(name)) {
 				return;
 			}
-			dirtySource = true;
-		} else if (isInsideDist(name ? path.join(target.dir, name) : target.dir)) {
-			// dist/ writes during a build are swallowed; a manual build still reloads
+		} else if (isInside(name ? path.join(target.dir, name) : target.dir, BUILT)) {
+			// Build-output writes while updating are swallowed; a manual build still reloads.
 			if (Date.now() < swallowDistUntil) return;
-		} else {
-			dirtySource = true;
 		}
+		dirty = true;
+		if (target.build !== false) dirtySource = true;
 		schedule();
 	}
 
@@ -252,14 +280,8 @@ export default function devWatch(pi: ExtensionAPI) {
 			sessionCtx = ctx;
 			if (dirtySource) {
 				dirtySource = false;
-				const result = await pi.exec("npm", ["run", "build", "--silent"], {
-					cwd: WORKFLOWS,
-					timeout: BUILD_TIMEOUT_MS,
-				});
-				if (result.code !== 0) {
-					report("dev-reload: build FAILED — not reloading", result.stderr || result.stdout);
-					return;
-				}
+				dirty = false;
+				if (!(await rebuild())) return;
 			}
 			await ctx.reload();
 			return;
@@ -290,8 +312,9 @@ export default function devWatch(pi: ExtensionAPI) {
 		sessionCtx = ctx;
 		startWatching(ctx);
 		if (ENABLED && isDistStale()) {
+			dirty = true;
 			dirtySource = true;
-			notify("dev-watch: dist/ is older than src/ — rebuilding", "warning");
+			notify("dev-watch: opensec-pi-subagents artifact is older than its inputs — rebuilding", "warning");
 			void cycle();
 		}
 	});

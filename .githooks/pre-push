@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pre-push — keep releases honest: dist/ current, tests green, tags pinned.
+# pre-push — keep releases honest: artifact current, tests green, tags pinned.
 #
 # Installed by dev/setup-dev.sh via `git config core.hooksPath .githooks`.
 # Bypass once with `git push --no-verify` if you know what you are doing.
@@ -34,15 +34,9 @@ while read -r local_ref local_sha remote_ref _remote_sha; do
 	esac
 done
 
-# --- the committed dist/ must match a fresh build ------------------------------
-echo "pre-push: rebuilding pi-dynamic-workflows to verify dist/ is current…"
-(cd pi-dynamic-workflows && npm run build --silent)
-if ! git diff --quiet -- pi-dynamic-workflows/dist; then
-	echo "pre-push: ERROR: pi-dynamic-workflows/dist differs from a fresh build." >&2
-	git --no-pager diff --stat -- pi-dynamic-workflows/dist >&2
-	echo "pre-push: commit the rebuilt dist/ (git add pi-dynamic-workflows/dist) and push again." >&2
-	exit 1
-fi
+# --- the committed opensec-pi-subagents artifact must match a fresh build ------
+echo "pre-push: verifying opensec-pi-subagents artifact is current…"
+"$ROOT/scripts/opensec-subagents/update.sh" --check
 
 # --- checks --------------------------------------------------------------------
 echo "pre-push: pi-usage checks…"
@@ -51,6 +45,3 @@ echo "pre-push: pi-usage checks…"
 echo "pre-push: pi-commandcode-cloud checks…"
 (cd pi-commandcode-cloud && npm run check)
 (cd pi-commandcode-cloud && npm run lint)
-
-echo "pre-push: pi-dynamic-workflows unit tests…"
-(cd pi-dynamic-workflows && npm run test:unit)

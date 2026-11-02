@@ -2,15 +2,13 @@
   "name": "pi-extensions",
   "version": "1.0.0",
   "private": true,
-  "description": "Full-stack deployment of a curated pi extension set: pi-usage, pi-dynamic-workflows (patched fork), plus third-party packages tracked at their latest release",
+  "description": "Full-stack deployment of a curated pi extension set: pi-usage, a TPS-patched opensec-pi-subagents build, plus third-party packages tracked at their latest release",
   "keywords": [
     "pi-package",
     "pi",
     "deployment"
   ],
-  "dependencies": {
-    "acorn": "^8.16.0"
-  },
+  "dependencies": {},
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
@@ -29,12 +27,12 @@
     "extensions": [
       "pi-usage/extensions/usage/index.ts",
       "pi-ollama-cloud/index.ts",
-      "pi-dynamic-workflows/dist/pi-extension.js",
+      "opensec-pi-subagents/dist-bun/index.js",
       "pi-commandcode-cloud/index.ts"
     ],
     "skills": [
-      "pi-dynamic-workflows/skills/workflow-authoring",
-      "pi-dynamic-workflows/skills/workflow-patterns",
+      "skills/workflow-authoring",
+      "skills/workflow-patterns",
       "deploy/skills/deploy-pi-stack"
     ]
   }

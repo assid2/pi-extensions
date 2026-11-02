@@ -3,9 +3,9 @@
 #
 #   ./dev/setup-dev.sh
 #
-# Brings a machine to "just work on the extensions": dependencies, the compiled
-# workflows entrypoint, the git hooks, the global dev-watch extension (auto
-# rebuild + hot reload), and the pi packages pointed at this live checkout.
+# Brings a machine to "just work on the extensions": dependencies, the built
+# opensec-pi-subagents artifact, the git hooks, the global dev-watch extension
+# (auto rebuild + hot reload), and the pi packages pointed at this live checkout.
 #
 # Safe to re-run. Self-locating; no hardcoded home directory.
 
@@ -27,15 +27,19 @@ say "dependencies"
 npm install --prefix "$ROOT" --no-audit --no-fund
 (cd "$ROOT/pi-usage" && npm ci --no-audit --no-fund)
 (cd "$ROOT/pi-commandcode-cloud" && npm ci --no-audit --no-fund)
-(cd "$ROOT/pi-dynamic-workflows" && npm ci --no-audit --no-fund)
 
-say "build pi-dynamic-workflows (committed dist/)"
-(cd "$ROOT/pi-dynamic-workflows" && npm run build)
+say "build opensec-pi-subagents (TPS patch -> tsc -> bun bundle)"
+if [ ! -f "$ROOT/opensec-pi-subagents/dist-bun/index.js" ] || \
+   [ "$(find "$ROOT/vendor/opensec-pi-subagents/src" "$ROOT/patches/opensec-pi-subagents" -type f -newer "$ROOT/opensec-pi-subagents/dist-bun/index.js" -print -quit)" ]; then
+  "$ROOT/scripts/opensec-subagents/update.sh"
+else
+  echo "opensec-pi-subagents/ is current"
+fi
 
 say "git hooks"
 git -C "$ROOT" config core.hooksPath "$ROOT/.githooks"
 chmod +x "$ROOT/.githooks/"* 2>/dev/null || true
-echo "core.hooksPath -> $ROOT/.githooks (pre-commit rebuilds dist/, pre-push verifies + tests)"
+echo "core.hooksPath -> $ROOT/.githooks (pre-commit/push verify the built artifact)"
 
 say "global dev-watch extension (auto rebuild + hot reload)"
 mkdir -p "$AGENT_DIR/extensions"
@@ -46,15 +50,15 @@ say "point pi at this live checkout"
 pi install "$ROOT/pi-usage"
 pi install "$ROOT/pi-commandcode-cloud"
 pi install "$ROOT/pi-ollama-cloud"
-pi install "$ROOT/pi-dynamic-workflows"
+pi install "$ROOT/opensec-pi-subagents"
 "$ROOT/deploy/apply.sh"
 "$ROOT/deploy/host-setup.sh"
 
 say "done"
 cat <<EOF
-Dev loop: edit sources under this checkout — pi rebuilds pi-dynamic-workflows and
-hot-reloads itself; pi-usage and pi-commandcode-cloud are loaded straight from
-TypeScript. Verify with
+Dev loop: edit sources under this checkout — pi rebuilds opensec-pi-subagents from
+vendor/ + patches/ and hot-reloads itself; pi-usage and pi-commandcode-cloud are
+loaded straight from TypeScript. Verify with
 \`./deploy/apply.sh --check\`, commit/push with plain git (hooks keep dist/ and
 release tags honest).
 EOF

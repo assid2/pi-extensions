@@ -72,7 +72,7 @@ self_entries() { node -e 'const j = require(process.argv[1]); console.log(j.pack
 log_has() { grep -qF "$(printf '%s\t%s' "$1" "$2")" "$FAKE_LOG"; }
 count_log() { grep -cF "$(printf '%s\t' "$1")" "$FAKE_LOG" || true; }
 
-THIRD_PARTY='"npm:@tintinweb/pi-subagents","npm:@monotykamary/pi-tps","git:github.com/obra/superpowers","npm:remote-pi","npm:pi-atelier"'
+THIRD_PARTY='"npm:opensec-pi-fff","npm:@monotykamary/pi-tps","git:github.com/obra/superpowers","npm:remote-pi","npm:pi-atelier"'
 
 # --- tests ------------------------------------------------------------------
 test_local_npm_duplicate_retired() {
@@ -80,7 +80,7 @@ test_local_npm_duplicate_retired() {
   new_env
   local rp="$ENV_DIR/remote-pi"; mkdir -p "$rp"
   printf '{"name":"remote-pi","version":"0.0.0"}\n' > "$rp/package.json"
-  seed_settings "$(node -e 'console.log(JSON.stringify([process.argv[1], "https://github.com/assid2/pi-extensions.git@" + process.argv[2], "npm:@tintinweb/pi-subagents", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers"]))' "$rp" "$VERSION")"
+  seed_settings "$(node -e 'console.log(JSON.stringify([process.argv[1], "https://github.com/assid2/pi-extensions.git@" + process.argv[2], "npm:opensec-pi-fff", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers"]))' "$rp" "$VERSION")"
   run_apply > "$ENV_DIR/apply.out" 2>&1 || fail "apply exited non-zero: $(cat "$ENV_DIR/apply.out")"
   log_has remove "$rp" || fail "local remote-pi copy not retired (log: $(grep remove "$FAKE_LOG" || true))"
   log_has install "npm:remote-pi" || fail "managed npm:remote-pi not installed"
@@ -92,10 +92,32 @@ test_relative_local_npm_duplicate_retired() {
   new_env
   local rp="$ENV_DIR/fake-remote-pi"; mkdir -p "$rp"
   printf '{"name":"remote-pi","version":"0.0.0"}\n' > "$rp/package.json"
-  seed_settings "$(node -e 'console.log(JSON.stringify(["https://github.com/assid2/pi-extensions.git@" + process.argv[2], "../fake-remote-pi", "npm:@tintinweb/pi-subagents", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers", "npm:pi-atelier"]))' "$rp" "$VERSION")"
+  seed_settings "$(node -e 'console.log(JSON.stringify(["https://github.com/assid2/pi-extensions.git@" + process.argv[2], "../fake-remote-pi", "npm:opensec-pi-fff", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers", "npm:pi-atelier"]))' "$rp" "$VERSION")"
   run_apply > "$ENV_DIR/apply.out" 2>&1 || fail "apply exited non-zero: $(cat "$ENV_DIR/apply.out")"
   log_has remove "$rp" || fail "relative local copy not retired by resolved path (log: $(grep remove "$FAKE_LOG" || true))"
   log_has install "npm:remote-pi" || fail "managed npm:remote-pi not installed"
+}
+
+test_stale_dev_subpath_retired() {
+  echo "A11 a local entry for a sub-project removed from this checkout is retired"
+  new_env
+  local gone="$REPO_ROOT/pi-dynamic-workflows"
+  [ ! -e "$gone" ] || fail "test precondition: $gone should not exist"
+  seed_settings "[\"https://github.com/assid2/pi-extensions.git@$VERSION\",\"$gone\"]"
+  run_apply > "$ENV_DIR/apply.out" 2>&1 || fail "apply exited non-zero: $(cat "$ENV_DIR/apply.out")"
+  log_has remove "$gone" \
+    || fail "stale in-checkout path not retired (log: $(grep remove "$FAKE_LOG" || true))"
+  run_apply --check >/dev/null 2>&1 || fail "--check not converged after retiring the stale path"
+}
+
+test_manifest_retired_removed() {
+  echo "A10 a manifest-retired package is removed in additive mode"
+  new_env
+  seed_settings "[\"https://github.com/assid2/pi-extensions.git@$VERSION\",\"npm:@tintinweb/pi-subagents\"]"
+  run_apply > "$ENV_DIR/apply.out" 2>&1 || fail "apply exited non-zero: $(cat "$ENV_DIR/apply.out")"
+  log_has remove "npm:@tintinweb/pi-subagents" \
+    || fail "retired package not removed (log: $(grep remove "$FAKE_LOG" || true))"
+  run_apply --check >/dev/null 2>&1 || fail "--check not converged after retiring the package"
 }
 
 test_bad_override_rejected() {
@@ -173,7 +195,7 @@ test_fix_uses_existing_url() {
   local dev="$ENV_DIR/dev-checkout"; mkdir -p "$dev"
   git -C "$dev" init -q
   git -C "$dev" remote add origin ssh://git@ssh.github.com:443/assid2/pi-extensions.git
-  seed_settings "$(node -e 'console.log(JSON.stringify([process.argv[1], "https://github.com/assid2/pi-extensions.git@v1.1.4", "npm:@tintinweb/pi-subagents", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers"]))' "$dev")"
+  seed_settings "$(node -e 'console.log(JSON.stringify([process.argv[1], "https://github.com/assid2/pi-extensions.git@v1.1.4", "npm:opensec-pi-fff", "npm:@monotykamary/pi-tps", "git:github.com/obra/superpowers"]))' "$dev")"
   run_apply > "$ENV_DIR/apply.out" 2>&1 || fail "apply exited non-zero: $(cat "$ENV_DIR/apply.out")"
   log_has remove "https://github.com/assid2/pi-extensions.git@v1.1.4" \
     || fail "FIX did not remove the existing https entry (log: $(grep remove "$FAKE_LOG" || true))"
@@ -200,6 +222,8 @@ test_git_shorthand_self_reused
 test_bad_override_rejected
 test_local_npm_duplicate_retired
 test_relative_local_npm_duplicate_retired
+test_manifest_retired_removed
+test_stale_dev_subpath_retired
 
 if [ "$FAILS" -eq 0 ]; then
   echo "PASS (apply)"

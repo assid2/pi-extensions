@@ -1,8 +1,9 @@
 # Root install artifacts. Dependencies here are dev-only tooling (the extension
-# packages carry their own tracked lockfiles), so the root tree stays lockless.
-node_modules/
-package-lock.json
+# packages, including the vendored source, carry their own tracked lockfiles), so
+# the root tree stays lockless. Anchored: vendor/ keeps its package-lock.
+/node_modules/
+/package-lock.json
 
 # Machine-local agent configuration: provider/model choice and the relay identity
-# are per-machine and must never travel.
-.pi/
+# are per-machine and must never travel. Anchored so vendor/ source stays intact.
+/.pi/

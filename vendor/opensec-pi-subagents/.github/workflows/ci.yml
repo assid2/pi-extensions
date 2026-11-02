@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+
+  # The earliest Pi the peerDependencies claim (`>=1.1.0`). The devDependencies, and the
+  # `overrides` that keep npm from mixing in a newer pi-agent-core, pin exactly that floor, so
+  # this job runs the suite on the pinned install. It is NOT continue-on-error: a green run
+  # here is the evidence behind the peer range. (Earlier floors: 0.80.0 -> 0.81.0 for
+  # `toolResult.usage` in getSessionStats, 0.81.0 -> 0.84.0 for `constrainedSampling` and
+  # `stripTerminalSequences`, 0.84.0 -> 1.1.0 for the session-transcript model the @handle
+  # clone is built on, upstream tintinweb/pi-subagents#384.)
+  compat-floor-pi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pi is the floor
+        run: node -e "const v=JSON.parse(require('fs').readFileSync('node_modules/@earendil-works/pi-coding-agent/package.json','utf8')).version; if (v!=='1.1.0') { console.error('expected Pi 1.1.0, got '+v); process.exit(1) }"
+      - name: Typecheck against floor Pi
+        run: npm run typecheck
+      - name: Test suite against floor Pi
+        run: npx vitest run --reporter=dot
+
+  compat-latest-pi:
+    runs-on: ubuntu-latest
+    continue-on-error: true # current Pi is not a hard support guarantee; surface breakage without blocking
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install current Pi
+        # (The `overrides` pin the floor; dropped here so npm takes the current Pi's own dependencies.)
+        run: |
+          npm pkg delete overrides
+          npm install --no-save @earendil-works/pi-coding-agent@latest @earendil-works/pi-ai@latest @earendil-works/pi-tui@latest
+      - name: Typecheck against current Pi
+        run: npm run typecheck
+      - name: Test suite against current Pi
+        run: npx vitest run --reporter=dot

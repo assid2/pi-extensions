@@ -1,0 +1,312 @@
+# TPS patch for opensec-pi-subagents — per-agent + aggregate output tok/s
+#
+# Base:  opensec-git/opensec-pi-subagents master
+#        commit 76fd35c4a5e814251badd1f7f523557d3ea7fcf9 (v0.20.9)
+# Apply: git apply -p1 <this file>   (from the source root)
+#
+# What it adds:
+#   src/token-rate.ts            rolling 10 s sampler over cumulative OUTPUT
+#                                tokens (input/cache are excluded: they step at
+#                                API boundaries and spike the rate)
+#   src/ui/agent-widget.ts       samples each running agent every frame; shows
+#                                `N tok/s` per row and on the `Agents` heading
+#   test/token-rate.test.ts      unit tests for the sampler
+#   test/agent-widget-tps.test.ts  widget-level per-agent + aggregate rates
+#
+# Regenerate after editing the working tree:
+#   cd <source root> && git add -A && git diff --cached -- src test > 0001-tps.patch
+# The updater (scripts/opensec-subagents/update.sh) applies this with --3way;
+# a rejected hunk means upstream moved the widget code, so rebase the patch.
+#
+diff --git a/src/token-rate.ts b/src/token-rate.ts
+new file mode 100644
+index 0000000..70566eb
+--- /dev/null
++++ b/src/token-rate.ts
+@@ -0,0 +1,69 @@
++/**
++ * token-rate.ts — rolling output-token/s sampler for the live agent surfaces.
++ *
++ * The agent widget renders every 80 ms, but only the *generated* (output)
++ * tokens move while a model is producing. Input and cache-read tokens jump in
++ * one step at each API-call boundary; feeding those into a rate produced
++ * implausible spikes that read as speed, so they are deliberately excluded —
++ * same rule as pi-dynamic-workflows' token-rate.ts.
++ *
++ * Samples are plain `(timestamp, cumulative output)` pairs in a 10 s rolling
++ * window. A stalled agent keeps the same total, the window ages out, and the
++ * rate decays to 0 without any explicit reset.
++ */
++
++/** Rolling window for the token/s rate. Older samples age out so a stall decays to 0. */
++const RATE_WINDOW_MS = 10_000;
++
++type SampleList = Array<{ ts: number; total: number }>;
++
++/** Push a (ts, total) sample into a rolling sample list, collapsing same-instant repeats. */
++function pushSample(samples: SampleList, now: number, total: number): void {
++  const last = samples[samples.length - 1];
++  // Collapse repeat renders within the same instant (e.g. width recalcs).
++  if (last && last.ts === now && last.total === total) return;
++  samples.push({ ts: now, total });
++  // Drop samples beyond the rolling window, always keeping >=2 so a rate is computable.
++  while (samples.length > 2 && now - samples[0].ts > RATE_WINDOW_MS) samples.shift();
++}
++
++/** Tokens/second over the oldest->newest span; 0 when there are too few samples
++ *  or the total plateaued (the stall signal). */
++function rateOver(samples: SampleList | undefined): number {
++  if (!samples || samples.length < 2) return 0;
++  const oldest = samples[0];
++  const newest = samples[samples.length - 1];
++  const elapsedMs = newest.ts - oldest.ts;
++  if (elapsedMs <= 0) return 0;
++  const delta = newest.total - oldest.total;
++  if (delta <= 0) return 0;
++  return (delta / elapsedMs) * 1000;
++}
++
++/** Sample lists keyed by surface, e.g. `agents` for the aggregate and
++ *  `agent:<id>` for one row. Cleared when the surface goes idle. */
++const tokenSamples = new Map<string, SampleList>();
++
++/** Record a cumulative output-token total for `key` at time `now` (ms). */
++export function sampleTokenRate(key: string, total: number, now: number): void {
++  const samples = tokenSamples.get(key) ?? [];
++  pushSample(samples, now, total);
++  tokenSamples.set(key, samples);
++}
++
++/** Output tokens/second over the rolling window; 0 for unknown or stalled keys. */
++export function tokenRate(key: string): number {
++  return rateOver(tokenSamples.get(key));
++}
++
++/** Forget one surface's samples. */
++export function clearTokenRate(key: string): void {
++  tokenSamples.delete(key);
++}
++
++/** Forget every surface whose key starts with `prefix` (e.g. `agent:`). */
++export function clearTokenRates(prefix: string): void {
++  for (const key of tokenSamples.keys()) {
++    if (key.startsWith(prefix)) tokenSamples.delete(key);
++  }
++}
+diff --git a/src/ui/agent-widget.ts b/src/ui/agent-widget.ts
+index 34f0df0..842b1fc 100644
+--- a/src/ui/agent-widget.ts
++++ b/src/ui/agent-widget.ts
+@@ -9,6 +9,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
+ import { renderAgentName } from "../agent-color.js";
+ import { type AgentManager, isTopLevelAgent } from "../agent-manager.js";
+ import { getConfig } from "../agent-types.js";
++import { clearTokenRate, clearTokenRates, sampleTokenRate, tokenRate } from "../token-rate.js";
+ import type { AgentInvocation, SubagentType, WidgetMode } from "../types.js";
+ import { type EventedSessionLike, getCachedSessionContextPercent, getLifetimeCost, getLifetimeTotal, type LifetimeUsage } from "../usage.js";
+ import { RefreshTicker } from "./refresh-ticker.js";
+@@ -34,6 +35,11 @@ export const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",
+ /** Statuses that indicate an error/non-success outcome (used for linger behavior and icon rendering). */
+ export const ERROR_STATUSES = new Set(["error", "aborted", "steered", "stopped"]);
+ 
++/** Rolling token/s sampler keys: the running-agent aggregate and one per agent row. */
++const RATE_KEY = "agents";
++const AGENT_RATE_PREFIX = "agent:";
++const agentRateKey = (id: string) => `${AGENT_RATE_PREFIX}${id}`;
++
+ /** Tool name → human-readable action for activity descriptions. */
+ const TOOL_DISPLAY: Record<string, string> = {
+   read: "reading",
+@@ -550,6 +556,8 @@ export class AgentWidget {
+     if (bg) parts.push(formatTurns(bg.turnCount, bg.maxTurns));
+     if (toolUses > 0) parts.push(`${toolUses} tool use${toolUses === 1 ? "" : "s"}`);
+     if (tokenText) parts.push(tokenText);
++    const rate = tokenRate(agentRateKey(a.id));
++    if (tokenText && rate > 0) parts.push(`${Math.round(rate)} tok/s`);
+     if (costText) parts.push(costText);
+     parts.push(elapsed);
+     const statsText = parts.join(" · ");
+@@ -602,6 +610,23 @@ export class AgentWidget {
+   private buildWidgetLines(w: number, theme: Theme): string[] {
+     const allAgents = this.widgetAgents();
+     const running = allAgents.filter(a => a.status === "running");
++    // Feed the rolling token/s sampler: cumulative generated output per running
++    // agent, plus their sum for the heading. Only output tokens are sampled —
++    // input/cache tokens step at API boundaries and produce implausible spikes.
++    // When nothing runs, drop the samples so a later run starts clean.
++    const now = this.clockAt || Date.now();
++    if (running.length > 0) {
++      let totalOutput = 0;
++      for (const a of running) {
++        const output = a.lifetimeUsage?.output ?? 0;
++        totalOutput += output;
++        sampleTokenRate(agentRateKey(a.id), output, now);
++      }
++      sampleTokenRate(RATE_KEY, totalOutput, now);
++    } else {
++      clearTokenRate(RATE_KEY);
++      clearTokenRates(AGENT_RATE_PREFIX);
++    }
+     const queuedCount = allAgents.reduce((n, a) => a.status === "queued" ? n + 1 : n, 0);
+     const finished = allAgents.filter(a =>
+       a.status !== "running" && a.status !== "queued" && a.completedAt
+@@ -632,7 +657,13 @@ export class AgentWidget {
+     const hasQueued = queuedCount > 0;
+     const totalBody = finished.length + running.length * 2 + (hasQueued ? 1 : 0);
+ 
+-    const lines: string[] = [truncate(theme.fg(headingColor, headingIcon) + " " + theme.fg(headingColor, "Agents"))];
++    const aggregateRate = tokenRate(RATE_KEY);
++    const lines: string[] = [
++      truncate(
++        theme.fg(headingColor, headingIcon) + " " + theme.fg(headingColor, "Agents")
++          + (aggregateRate > 0 ? theme.fg(headingColor, ` · ${Math.round(aggregateRate)} tok/s`) : ""),
++      ),
++    ];
+ 
+     if (totalBody <= maxBody) {
+       // Everything fits — add all lines and fix up connectors for the last item.
+diff --git a/test/agent-widget-tps.test.ts b/test/agent-widget-tps.test.ts
+new file mode 100644
+index 0000000..6960734
+--- /dev/null
++++ b/test/agent-widget-tps.test.ts
+@@ -0,0 +1,80 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { clearTokenRates } from "../src/token-rate.js";
++import { type AgentActivity, AgentWidget } from "../src/ui/agent-widget.js";
++
++const T0 = new Date("2026-01-01T00:00:00Z").getTime();
++const theme = { fg: (_c: string, s: string) => s, bold: (s: string) => s };
++
++function mount(record: any) {
++  const acts = new Map<string, AgentActivity>();
++  acts.set(record.id, { activeTools: new Map(), toolUses: 0, responseText: "", turnCount: 1 });
++  const widget = new AgentWidget({ listAgents: () => [record] } as any, acts, () => "all", () => false, () => false);
++  let factory: any;
++  widget.setUICtx({ setStatus: () => {}, setWidget: (_k, c) => { factory = c; } });
++  widget.update();
++  const render = () => factory?.({ terminal: { columns: 160 }, requestRender: () => {} }, theme).render().join("\n") ?? "";
++  return { widget, render };
++}
++
++beforeEach(() => {
++  vi.useFakeTimers();
++  vi.setSystemTime(T0);
++  clearTokenRates("");
++});
++afterEach(() => vi.useRealTimers());
++
++describe("AgentWidget token rate", () => {
++  it("shows per-agent and aggregate output tok/s once two samples exist", () => {
++    const record: any = {
++      id: "a1",
++      type: "Explore",
++      description: "rate probe",
++      status: "running",
++      toolUses: 1,
++      startedAt: T0 - 1_000,
++      lifetimeUsage: { input: 1_000, output: 100, cacheRead: 0, cacheWrite: 0, cost: 0 },
++      compactionCount: 0,
++      isBackground: true,
++    };
++    const { widget, render } = mount(record);
++
++    // One sample is not a rate.
++    expect(render()).not.toContain("tok/s");
++
++    // 200 generated tokens over 2 s => 100 tok/s, on the row and the heading.
++    record.lifetimeUsage.output = 300;
++    vi.setSystemTime(T0 + 2_000);
++    widget.update();
++    const out = render();
++    expect(out).toContain("100 tok/s");
++    expect(out).toMatch(/Agents.*100 tok\/s/);
++
++    widget.dispose();
++  });
++
++  it("decays to 0 when output plateaus", () => {
++    const record: any = {
++      id: "a2",
++      type: "Explore",
++      description: "stall probe",
++      status: "running",
++      toolUses: 0,
++      startedAt: T0 - 1_000,
++      lifetimeUsage: { input: 1_000, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
++      compactionCount: 0,
++      isBackground: true,
++    };
++    const { widget, render } = mount(record);
++    expect(render()).not.toContain("tok/s");
++    record.lifetimeUsage.output = 200;
++    vi.setSystemTime(T0 + 2_000);
++    widget.update();
++    expect(render()).toContain("100 tok/s");
++
++    vi.setSystemTime(T0 + 20_000);
++    widget.update();
++    expect(render()).not.toContain("tok/s");
++
++    widget.dispose();
++  });
++});
+diff --git a/test/token-rate.test.ts b/test/token-rate.test.ts
+new file mode 100644
+index 0000000..8279172
+--- /dev/null
++++ b/test/token-rate.test.ts
+@@ -0,0 +1,53 @@
++import { beforeEach, describe, expect, it } from "vitest";
++import { clearTokenRate, clearTokenRates, sampleTokenRate, tokenRate } from "../src/token-rate.js";
++
++describe("token rate sampler", () => {
++  beforeEach(() => clearTokenRates(""));
++
++  it("returns 0 until two samples exist", () => {
++    expect(tokenRate("a")).toBe(0);
++    sampleTokenRate("a", 100, 1_000);
++    expect(tokenRate("a")).toBe(0);
++  });
++
++  it("computes output tokens per second over the sample span", () => {
++    sampleTokenRate("a", 100, 1_000);
++    sampleTokenRate("a", 300, 3_000);
++    // 200 tokens over 2 s.
++    expect(tokenRate("a")).toBeCloseTo(100);
++  });
++
++  it("returns 0 when the total plateaus", () => {
++    sampleTokenRate("a", 100, 1_000);
++    sampleTokenRate("a", 100, 2_000);
++    sampleTokenRate("a", 100, 3_000);
++    expect(tokenRate("a")).toBe(0);
++  });
++
++  it("ages old samples out of the window", () => {
++    sampleTokenRate("a", 0, 0);
++    sampleTokenRate("a", 100, 1_000);
++    // 10 s later: the 0 s sample is outside the 10 s window and is dropped, so
++    // the rate is measured from the 1 s sample.
++    sampleTokenRate("a", 1_000, 11_000);
++    expect(tokenRate("a")).toBeCloseTo(90);
++  });
++
++  it("keeps keys independent and clears by prefix", () => {
++    sampleTokenRate("agent:1", 0, 0);
++    sampleTokenRate("agent:1", 100, 1_000);
++    sampleTokenRate("agent:2", 0, 0);
++    sampleTokenRate("agent:2", 200, 1_000);
++    expect(tokenRate("agent:1")).toBeCloseTo(100);
++    expect(tokenRate("agent:2")).toBeCloseTo(200);
++
++    clearTokenRates("agent:");
++    expect(tokenRate("agent:1")).toBe(0);
++    expect(tokenRate("agent:2")).toBe(0);
++
++    sampleTokenRate("agents", 0, 0);
++    sampleTokenRate("agents", 50, 1_000);
++    clearTokenRate("agents");
++    expect(tokenRate("agents")).toBe(0);
++  });
++});

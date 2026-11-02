@@ -406,6 +406,14 @@ if (mode === "plan") {
       lines.push("R\t" + s.display + "\tretired by the manifest — apply runs `pi remove`");
       return;
     }
+    const isStaleSelfSubpath = s.kind === "local"
+      && (s.resolved === repoRoot || s.resolved.startsWith(repoRoot + path.sep))
+      && !fs.existsSync(s.resolved);
+    if (isStaleSelfSubpath) {
+      converged = 0;
+      lines.push("R\t" + s.resolved + "\tlocal entry inside this checkout no longer exists (retired sub-project) — apply runs `pi remove`");
+      return;
+    }
     const isDuplicateCheckout = s.kind === "local" && s.repoIdentity === selfIdentity && s.resolvedRoot && s.resolvedRoot !== repoRoot;
     if (isDuplicateCheckout) {
       converged = 0;
@@ -449,6 +457,7 @@ manifestEntries.forEach((e) => {
 settings.forEach((s) => {
   if (retiredIdentities.has(s.identity)) { failures.push("  RETIRED: " + s.display + " (still present after apply)"); return; }
   if (s.kind === "local" && s.localName && manifestNpmNames.has(s.localName)) { failures.push("  DUPLICATE: " + s.display + " (local copy of managed npm package " + s.localName + " still present)"); return; }
+  if (s.kind === "local" && (s.resolved === repoRoot || s.resolved.startsWith(repoRoot + path.sep)) && !fs.existsSync(s.resolved)) failures.push("  STALE: " + s.display + " (local entry inside this checkout no longer exists)");
   if (s.kind === "local" && s.repoIdentity === selfIdentity && s.resolvedRoot && s.resolvedRoot !== repoRoot) failures.push("  DUPLICATE: " + s.display + " (still present after apply)");
 });
 if (prune) {

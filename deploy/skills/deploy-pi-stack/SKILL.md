@@ -91,8 +91,9 @@ request.
    third-party entry to its latest release (`pi update`), and removes entries the manifest
    explicitly retires — so a run is expected to touch the network and may print `LATEST` /
    `UNPIN` / `INSTALL-LATEST` / `RETIRE` actions. `RETIRE` covers four cases:
-   - a package the manifest lists under `retired` (for example `npm:pi-ollama-cloud`, now vendored
-     into this repository);
+   - a package the manifest lists under `retired` (for example `npm:@tintinweb/pi-subagents`
+     and `npm:opensec-pi-subagents`, superseded by the vendored TPS build, or
+     `npm:pi-ollama-cloud`, now vendored into this repository);
    - a hand-added local-path entry that points at a *different* checkout of this repository;
    - a duplicate git self-entry (for example an SSH entry left beside an HTTPS one);
    - a local-path copy of a managed npm package (for example a global `remote-pi` beside

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pre-commit — never commit a stale dist/ or an inconsistent release manifest.
+# pre-commit — never commit a stale build artifact or an inconsistent release manifest.
 #
 # Installed by dev/setup-dev.sh via `git config core.hooksPath .githooks`.
 # Bypass once with `git commit --no-verify` if you know what you are doing.
@@ -11,12 +11,11 @@ cd "$ROOT"
 
 STAGED="$(git diff --cached --name-only --diff-filter=ACMR)"
 
-# --- pi-dynamic-workflows/dist is a committed build artifact -------------------
-if printf '%s\n' "$STAGED" | grep -qE '^pi-dynamic-workflows/(src/|package\.json|tsconfig)'; then
-	echo "pre-commit: pi-dynamic-workflows sources staged — rebuilding dist/…"
-	(cd pi-dynamic-workflows && npm run build --silent)
-	# dist/ is gitignored inside the sub-project but tracked in this repo: force-add.
-	git add -f -A -- pi-dynamic-workflows/dist
+# --- opensec-pi-subagents is a committed build artifact -----------------------
+if printf '%s\n' "$STAGED" | grep -qE '^(vendor/opensec-pi-subagents/|patches/opensec-pi-subagents/|skills/workflow-)'; then
+	echo "pre-commit: opensec-pi-subagents inputs staged — rebuilding artifact…"
+	"$ROOT/scripts/opensec-subagents/update.sh"
+	git add -A -- opensec-pi-subagents
 fi
 
 # --- the monorepo self-entry must stay unversioned -----------------------------

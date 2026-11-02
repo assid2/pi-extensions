@@ -7,8 +7,8 @@ Per-account provider quota/balance/spend **and** per-agent token usage for the
 - **Per-account usage** — multiple accounts of the same provider (e.g. two
   Ollama Cloud keys) are modeled as alias providers; each account's quota,
   balance, and spend is fetched and displayed separately.
-- **Per-agent usage** — the main session **and** every subagent (pi-subagents,
-  pi-dynamic-workflows) with its own provider/account: tokens in/out/cache,
+- **Per-agent usage** — the main session **and** every subagent (opensec-pi-subagents)
+  with its own provider/account: tokens in/out/cache,
   cost, status, and duration.
 - **New providers** — `ollama-cloud` (request-count 5h/7d limits + 4-week
   spend), `commandcode-cloud` (Command Code 5h/weekly/monthly credit windows +
@@ -78,7 +78,7 @@ generic/custom endpoints.
 - The **first** entry per provider is its default account (no alias).
 - **Extra accounts** declare an `alias` — a clone provider id. The extension
   registers it (same models, same endpoint) so `/model`, Ctrl+P, the
-  pi-subagents `model` parameter, and workflow `model`/`tier` can all select
+  pi-subagents-compatible subagent `model` parameter, and workflow `model`/`tier` can all select
   it. Because every session message records the provider id it used, usage is
   attributed to the right account automatically.
 - **Keys**: run `/login` and select the alias to store its key in `auth.json`
@@ -143,14 +143,14 @@ Endpoint overrides: `PI_*_USAGE_ENDPOINT` env vars (see
 
 ## How agent usage works
 
-- pi-subagents persists top-level subagent sessions with a `parentSession`
+- opensec-pi-subagents persists top-level subagent sessions with a `parentSession`
   header pointing at the parent session file; the scanner walks that graph
   (any project directory) and sums per-message `usage` (assistant + tool +
   compaction) incrementally (byte-offset tails, mtime-window prefilter).
-- Live status comes from the in-process event bus (`subagents:*`,
-  `pi-dynamic-workflows:lifecycle`).
-- pi-dynamic-workflows agents are in-memory by default; their usage is visible
-  live via the bus, and on disk only when `persistAgentSessions` is enabled.
+- Live status comes from the in-process event bus (`subagents:*`; the legacy
+  `pi-dynamic-workflows:lifecycle` channel is still understood).
+- Workflow-spawned agents are in-memory by default; their usage is visible
+  live via the bus, and on disk only when session persistence is enabled.
 
 ## Development
 

@@ -1,8 +1,7 @@
 {
-  "version": "v1.2.0",
+  "version": "v1.3.0",
   "packages": [
     "ssh://git@ssh.github.com:443/assid2/pi-extensions.git",
-    "npm:@tintinweb/pi-subagents",
     "npm:@monotykamary/pi-tps",
     "git:github.com/obra/superpowers",
     "npm:remote-pi",
@@ -15,6 +14,9 @@
     "remotePiGlyphPatch": { "version": 1, "verifiedAgainst": "0.7.0" }
   },
   "retired": [
+    "npm:@tintinweb/pi-subagents",
+    "npm:@quintinshaw/pi-dynamic-workflows",
+    "npm:opensec-pi-subagents",
     "npm:pi-ollama-cloud",
     "npm:pi-status-footer"
   ]
