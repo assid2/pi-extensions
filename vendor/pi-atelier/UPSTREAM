@@ -1,0 +1,14 @@
+repository: https://github.com/michaelmjhhhh/pi-atelier.git
+branch: 93025f2adb5bd8ce005ef8c7dee59deaf6385f03
+commit: 93025f2adb5bd8ce005ef8c7dee59deaf6385f03
+version: 0.18.0
+license: MIT
+vendored_at: 2026-11-02T18:18:24Z
+
+This directory is a pristine source snapshot. Do not edit it directly.
+Future changes live in patches/pi-atelier/*.patch (applied in filename order)
+and are applied to a temporary copy by scripts/pi-atelier/update.sh.
+
+The npm package ships the same TypeScript source and loads it through jiti;
+this repository additionally compiles it to a single ESM bundle so remote
+installs load frozen bytes while the source stays available in vendor/.

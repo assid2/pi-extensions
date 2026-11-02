@@ -1,7 +1,8 @@
 /**
  * Atelier sidebar-panel contribution for @assid2/pi-usage.
  *
- * Atelier (`npm:pi-atelier`) is the single custom-footer host. It renders
+ * Atelier (`pi-atelier`, compiled in this repository) is the single custom-footer
+ * host. It renders
  * contributed panels from the public `pi-atelier:sidebar-panels` event channel.
  * This module speaks that protocol *without importing Atelier* (which may be
  * absent), so pi-usage never fights another extension for pi's one `setFooter`

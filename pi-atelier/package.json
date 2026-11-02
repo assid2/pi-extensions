@@ -1,0 +1,30 @@
+{
+  "name": "pi-atelier",
+  "version": "0.18.0",
+  "private": true,
+  "type": "module",
+  "description": "A responsive status rail and live activity sidebar for Pi, compiled from vendored upstream source.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/michaelmjhhhh/pi-atelier.git"
+  },
+  "homepage": "https://github.com/michaelmjhhhh/pi-atelier#readme",
+  "pi": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.0",
+    "@earendil-works/pi-tui": ">=0.84.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    }
+  }
+}

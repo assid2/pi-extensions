@@ -25,6 +25,10 @@ likewise unpinned and always float to their latest release**.
 | [`vendor/opensec-pi-subagents/`](vendor/opensec-pi-subagents/) | Pristine upstream source snapshot for the build above (commit pinned in `UPSTREAM`) |
 | [`patches/opensec-pi-subagents/`](patches/opensec-pi-subagents/) | `0001-tps.patch` — the durable TPS change, reapplied on every upstream update |
 | [`scripts/opensec-subagents/`](scripts/opensec-subagents/) | `update.sh` — sync upstream, apply the patch, compile and bundle, verify |
+| [`pi-atelier/`](pi-atelier/) | **Generated** build of `michaelmjhhhh/pi-atelier` (MIT): one ESM bundle of the status-rail/sidebar host, compiled from the vendored source. Pi host modules stay external; no runtime `node_modules` — do not edit by hand |
+| [`vendor/pi-atelier/`](vendor/pi-atelier/) | Pristine upstream source snapshot for the build above (commit pinned in `UPSTREAM`) |
+| [`patches/pi-atelier/`](patches/pi-atelier/) | Future local `*.patch` files, applied in filename order; empty at present |
+| [`scripts/pi-atelier/`](scripts/pi-atelier/) | `update.sh` — sync upstream, apply patches, typecheck, test, bundle, verify |
 | [`skills/`](skills/) | `workflow-authoring` + `workflow-patterns`, the workflow guidance that used to ship with `pi-dynamic-workflows` |
 | [`pi-ollama-cloud/`](pi-ollama-cloud/) | Patched fork of `pi-ollama-cloud` (upstream `fgrehm/pi-ollama-cloud`, MIT), merged with upstream v0.12.1. The patch makes the package prefix-aware: its status bar, `/ollama-cloud-usage`, and web tools follow **any** active `ollama-*` provider and use that member's own key (TypeScript source, loaded directly) |
 | [`deployment.json`](deployment.json) | The stack manifest: an **unversioned** self-entry plus the third-party packages to install. Every entry is unversioned — `apply.sh` floats the self-entry to the newest release tag and third-party entries to their latest release on every apply. Portable — no local paths |
@@ -150,15 +154,15 @@ pi install <existing-url>@"$TAG"   # e.g. the https URL from `pi list`
 ```
 
 On the development checkout itself, updating is just `git pull` (+ rebuilding the
-`opensec-pi-subagents/` artifact when its inputs changed, see Development) and `/reload` in pi.
+`opensec-pi-subagents/` and `pi-atelier/` artifacts when their inputs changed, see Development)
+and `/reload` in pi.
 
 ## The stack
 
 | Extension | Source | Ref |
 |---|---|---|
-| pi-usage + opensec-pi-subagents (TPS build) + pi-ollama-cloud + pi-commandcode-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | newest release tag (floating, auto-tracked) |
+| pi-usage + opensec-pi-subagents (TPS build) + pi-atelier (compiled) + pi-ollama-cloud + pi-commandcode-cloud (this repo) | `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` | newest release tag (floating, auto-tracked) |
 | pi-tps | `npm:@monotykamary/pi-tps` | latest |
-| pi-atelier | `npm:pi-atelier` | latest (footer/status-rail + sidebar host) |
 | superpowers | `git:github.com/obra/superpowers` | latest |
 | remote-pi | `npm:remote-pi` | latest (official npm package; only its relay footer glyph is post-patched by `deploy/host-setup.sh`) |
 
@@ -166,10 +170,10 @@ No versions are present in `deployment.json`: `apply.sh` resolves the newest rel
 repository itself and takes whatever npm or GitHub publishes as latest for every third-party
 entry — both float on the next `apply.sh`. `npm:remote-pi` is the official npm package, installed
 as-is (we do not fork it); only its relay footer glyph is post-patched by `deploy/host-setup.sh`.
-`npm:@tintinweb/pi-subagents` and `npm:@quintinshaw/pi-dynamic-workflows` are **retired**, as is
-the npm copy of `npm:opensec-pi-subagents`: they are listed under `retired` in `deployment.json`,
-so `apply.sh` removes them wherever they are still installed. The subagent extension itself is
-loaded from `opensec-pi-subagents/` in this repository, not from npm.
+`npm:@tintinweb/pi-subagents` and `npm:@quintinshaw/pi-dynamic-workflows` are **retired**, as are
+the npm copies of `npm:opensec-pi-subagents` and `npm:pi-atelier`: they are listed under `retired`
+in `deployment.json`, so `apply.sh` removes them wherever they are still installed. The subagent
+and atelier extensions are loaded from this repository's compiled builds, not from npm.
 
 ### Footer and usage interop
 
@@ -195,27 +199,33 @@ need no `usage.json`.
   live checkout — no copies, hot-reloadable with `/reload`. `apply.sh` detects this and never
   installs a second (cloned) copy on the same machine (dev-checkout dedup rule).
 - **After pulling:** `pi-usage`, `pi-ollama-cloud` and `pi-commandcode-cloud` need nothing (pure
-  TS). `opensec-pi-subagents/` is committed, so a normal pull needs no build. Rebuild only when
-  you change `vendor/` or `patches/`.
-- **TPS patch and upstream updates.** The npm package ships only a prebuilt Bun bundle, so the TPS
-  change is carried as a patch against the vendored GitHub source:
+  TS). `opensec-pi-subagents/` and `pi-atelier/` are committed, so a normal pull needs no build.
+  Rebuild only when you change `vendor/` or `patches/`.
+- **Vendored builds and upstream updates.** `opensec-pi-subagents` is patched from source;
+  `pi-atelier` is compiled from pristine upstream source so remote installs do not depend on
+  jiti transforming its TypeScript. Both use the same shape:
 
   ```bash
   # rebuild from the current vendor/ snapshot (what the hooks run)
   scripts/opensec-subagents/update.sh
+  scripts/pi-atelier/update.sh
 
-  # fetch upstream master, vendor it, reapply the patch, compile + bundle
+  # fetch upstream, vendor it, reapply patches, compile + bundle
   scripts/opensec-subagents/update.sh --sync
+  scripts/pi-atelier/update.sh --sync
 
   # CI / pre-push: fail if the committed artifact is stale
   scripts/opensec-subagents/update.sh --check
+  scripts/pi-atelier/update.sh --check
   ```
 
-  The script applies `patches/opensec-pi-subagents/0001-tps.patch` with `--3way` to a scratch
-  copy of `vendor/`, typechecks, compiles with `tsc`, bundles with Bun (host modules external,
-  `croner`/`nanoid` embedded), runs the patch's tests, and replaces `opensec-pi-subagents/`. A
-  rejected hunk stops the run and prints how to rebase and regenerate the patch — upstream moved
-  the code it patches. Bun is the only extra maintainer prerequisite.
+  The opensec script applies `patches/opensec-pi-subagents/0001-tps.patch`, typechecks, compiles
+  with `tsc`, bundles with Bun (host modules external, `croner`/`nanoid` embedded), runs the
+  patch's tests, and replaces `opensec-pi-subagents/`. The atelier script applies every
+  `patches/pi-atelier/*.patch` in filename order, typechecks, runs the upstream suite (493 tests),
+  and bundles `extensions/index.ts` into `pi-atelier/dist/index.js`. A rejected hunk stops the run
+  and prints how to rebase and regenerate the patch — upstream moved the code it patches. Bun is
+  the only extra maintainer prerequisite.
 - **Working from another machine:** clone this repo (write access via your own SSH key or a
   token), bring that machine's pi up to date (the Installing flow above, or just `apply.sh`), then
   point its `packages` entries at the subdirectories of *your own* clone for live development.
@@ -228,8 +238,9 @@ need no `usage.json`.
 1. Commit the stack changes and bump `deployment.json`'s `version` field to the new release label.
    The monorepo self-entry stays **unversioned** — leave it as
    `ssh://git@ssh.github.com:443/assid2/pi-extensions.git` (the pre-commit hook enforces this).
-2. If the TPS inputs changed: `scripts/opensec-subagents/update.sh` and re-commit
-   `opensec-pi-subagents/` (the pre-commit hook does this when `vendor/` or `patches/` is staged).
+2. If a vendored input changed: `scripts/opensec-subagents/update.sh` and/or
+   `scripts/pi-atelier/update.sh`, then re-commit the generated package (the pre-commit hook does
+   this when `vendor/` or `patches/` is staged).
 3. `git tag v1.x.0 && git push origin main v1.x.0` (the pre-push hook verifies the tag equals
    `deployment.json` `version`).
 4. Machines converge by re-running `deploy/apply.sh` — or just asking their pi. A release bumps

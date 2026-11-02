@@ -18,6 +18,13 @@ if printf '%s\n' "$STAGED" | grep -qE '^(vendor/opensec-pi-subagents/|patches/op
 	git add -A -- opensec-pi-subagents
 fi
 
+# --- pi-atelier is a committed build artifact -------------------------------
+if printf '%s\n' "$STAGED" | grep -qE '^(vendor/pi-atelier/|patches/pi-atelier/)'; then
+	echo "pre-commit: pi-atelier inputs staged — rebuilding artifact…"
+	"$ROOT/scripts/pi-atelier/update.sh"
+	git add -A -- pi-atelier
+fi
+
 # --- the monorepo self-entry must stay unversioned -----------------------------
 # apply.sh floats it to the newest release tag, so a baked-in ref is always stale.
 if printf '%s\n' "$STAGED" | grep -qx 'deployment.json'; then

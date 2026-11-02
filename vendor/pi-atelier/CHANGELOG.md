@@ -1,0 +1,231 @@
+# Changelog
+
+## 0.18.0 — 2026-10-31
+
+- Show a temporary Sidebar **Prefill** panel while a local model is still reading a long prompt: a bar over the uncached prompt tokens, the token counts, the reading speed, and an estimate of how long until the first token. A long prefill used to look exactly like a hang. The panel is present only while prefilling and reserves nothing when it is absent. Configure with `prefillEnabled`, `prefillViews`, and the user-only `prefillProviders` allow-list, or toggle it in Control Center → Settings. Needs Pi 0.99 or newer to report progress; on an older Pi the panel never appears.
+- Prefill numbers count uncached tokens, because a cached prefix is not work the user is waiting for. The percent rides the bar, and the speed rides the `First token` row (`~4s · 3.4k tok/s`), taking its own row while no estimate is available. The speed is measured between progress chunks, and the first sample seeds its base with the cached prefix, so a warm prompt does not show a false speed.
+- Prefill asks only `openai-completions` providers on the allow-list, and only when the request body names the allow-listed model, so a Pi virtual model or a redirected request is left alone. A chunk listener exists only while such a request is in flight. A provider that cannot report progress simply never draws the panel, and no request error turns the feature off for the rest of the session: llama.cpp answers 400 when a prompt exceeds its context size, which says nothing about the progress field.
+- A Sidebar layout saved before Prefill existed gains the Prefill panel next to Context instead of at the bottom. A built-in panel that a saved layout predates joins the built-in beside it, and contributed panels keep the position you gave them.
+- Keep a red `× ERROR` activity state when a run ends in a provider error instead of resetting to ready. Tool failures and user aborts still settle to ready.
+- Stop replacing `todo` results with `N/M done · see sidebar` while the TODO panel is visible. The agent now receives the full result, including task ids, `list` output, and refused updates ([#103](https://github.com/michaelmjhhhh/pi-atelier/issues/103)).
+- Stop overstating response TPS. The tokens in the first streamed chunk no longer count toward the rate, and a generation window shorter than 500ms shows no TPS, because chunks that arrive in one batch say nothing about decode speed ([#106](https://github.com/michaelmjhhhh/pi-atelier/issues/106)).
+- Internal: update development dependencies to resolve audit findings (vitest 4.1.12; overrides for undici, glob, minimatch, and zod under Pi 0.84.0). Pi 0.84.0 remains the minimum supported and tested version.
+
+## 0.17.0 — 2026-10-29
+
+- Add a global **Atelier footer** setting. Turn it off in **Settings** or set `"showFooter": false` to keep Pi's or another extension's footer and composer while still using the Sidebar ([#96](https://github.com/michaelmjhhhh/pi-atelier/issues/96)).
+- Add an optional `toggleShortcut` setting that shows or hides the Sidebar with one key, without opening the Control Center. It is unset by default ([#98](https://github.com/michaelmjhhhh/pi-atelier/issues/98)).
+- Remember the Sidebar width across sessions. A confirmed `Ctrl+Shift+R` resize is saved as the user-only `sidebarWidth` setting (28–72 columns, default 44) and becomes the starting width for new sessions ([#100](https://github.com/michaelmjhhhh/pi-atelier/issues/100)).
+- Fix concurrent settings saves that could drop a value or fail with `ENOENT`. Saves to the user configuration now run one at a time.
+
+## 0.16.0 — 2026-10-15
+
+- Add optional responsive progress bars to contributed label/value rows; narrow panels retain the label and value without a bar ([#93](https://github.com/michaelmjhhhh/pi-atelier/issues/93)).
+- Accept optional responsive label/value rows for contributed Sidebar panels, with semantic colors and the existing plain-text rows as a compatibility fallback ([#89](https://github.com/michaelmjhhhh/pi-atelier/issues/89)).
+- Replace the context meter's hardcoded dark background with a dim character track so it works on light backgrounds ([#92](https://github.com/michaelmjhhhh/pi-atelier/issues/92)).
+
+## 0.15.0 — 2026-10-03
+
+- Give each Sidebar panel its own resting color (Activity green, Context cyan, Usage gold, Tools pink) and tint panel frames to match their headers; status colors still take over while working, on failures, and at context thresholds ([#86](https://github.com/michaelmjhhhh/pi-atelier/pull/86)).
+- Show the Workspace branch on its own full-width row, color added and removed lines, and combine changed files and lines into one row when they fit ([#86](https://github.com/michaelmjhhhh/pi-atelier/pull/86)).
+- Start the Sidebar in Manual mode instead of Auto; the startup preference now reads On/Off ([#86](https://github.com/michaelmjhhhh/pi-atelier/pull/86)).
+- Simplify the Activity panel: tool rows lead with ✓/✗/◐ status glyphs instead of `done`/`failed` text, hide sub-second durations for successful tools, ellipsize long summaries, and align summaries in one column. The run header puts its duration on the right, and the tool count reads `Tools  N done`, shown only when more tools ran than are listed ([#87](https://github.com/michaelmjhhhh/pi-atelier/pull/87)).
+
+## 0.14.0 — 2026-10-03
+
+- Automatically collapse the Sidebar when terminal width is limited and restore it when space returns. Add independent Auto/Manual modes and show/hide controls; preserve preferred width and full TODO output while collapsed ([#76](https://github.com/michaelmjhhhh/pi-atelier/issues/76)).
+- Internal: restore package-content and packed-install checks on Windows and under npm 12, preserve useful npm errors, and handle temporary paths containing spaces and ampersands when running the scripts directly ([#85](https://github.com/michaelmjhhhh/pi-atelier/pull/85)).
+
+## 0.13.0 — 2026-10-02
+
+- Strip OSC hyperlinks and other terminal control sequences from footer, sidebar, notification, and chart text; previously only color codes were removed, leaving link targets visible ([#83](https://github.com/michaelmjhhhh/pi-atelier/issues/83)).
+- Follow [no-color.org](https://no-color.org): only a non-empty `NO_COLOR` disables color, on every surface.
+- Show `—` for response timing that has not been measured yet; `~` now only marks an estimated output speed.
+- Report when restoring the previous model, thinking level, or tool selection fails after a change is rejected.
+- Draw subagent cost images in each curve's palette color for every theme, instead of falling back to grey when a theme does not emit truecolor.
+- Pulse the working Agent jewel once per sidebar animation tick.
+- The package entry point now exports only the sidebar contribution protocol: `registerSidebarPanel`, the ID and request guards, size limits, and event types. The internal registry and layout helpers are no longer exported. Document the protocol in the README.
+- Internal: consolidate duplicated text, path, and file helpers; remove dead code and test-only parameters; split long functions; remove vacuous and duplicate tests. Fix `--ref` in the workspace benchmark and add `npm run bench:sidebar` / `bench:workspace`.
+
+## 0.12.1 — 2026-09-30
+
+- Mark host-provided Pi peers optional so ordinary npm installs do not download a redundant Pi dependency tree. Add a packed-install regression check and dependency audits to the validation gate ([#81](https://github.com/michaelmjhhhh/pi-atelier/issues/81)).
+- Update development dependencies to resolve known audit findings while retaining Pi 0.84.0 and Node.js 22.19.0 as the minimum supported versions.
+
+## 0.12.0 — 2026-09-26
+
+- Keep sidebar plot space reserved while a dialog covers it, instead of switching smooth native curves into character staircases. Restore the plot after the dialog closes.
+
+- Remove the Control Center Actions page, including session details, rename and compaction prompts, and the unused `showSessionActions` setting.
+- Open the subagent graph directly from Control Center → Subagent usage, with the same session and trust checks as `/atelier usage`.
+- Inspect individual reply points in `/atelier usage` with `[` / `]`: highlight the selected observation and show elapsed time, cumulative cost and that reply’s cost.
+
+- Add a graph-only SUBAGENTS panel and framed `/atelier usage` view, with distinct per-child colors, numbered paginated legends, real observation markers and keyboard focus. Plot every readable child history without a six-curve display cap. Kitty-compatible terminals render anti-aliased curves; other terminals retain a text fallback ([#69](https://github.com/michaelmjhhhh/pi-atelier/issues/69)).
+- Preserve distinct same-millisecond replies and receipt-only continuation histories; remove the extra 32-source cutoff while retaining byte limits and explicit partial-data status.
+- Read owner-validated pi-subagents accounting events for reply-level cost history, reconcile completed curves against saved metadata, deduplicate repeated references and refresh only while background work is active. Main-agent usage stays separate.
+
+## 0.11.2 — 2026-09-25
+
+- Restore the terminal cursor after Sidebar cleanup when Pi has already stopped its renderer ([#72](https://github.com/michaelmjhhhh/pi-atelier/issues/72)).
+- Use F6 as the default Control Center shortcut on macOS and Windows, avoiding Option-key text input on macOS. Keyboards with media keys may require Fn+F6 on either platform. Migrate saved Alt+A settings to F6 when loading configuration and stop registering Alt+A. Other custom shortcuts remain available alongside F6 ([#73](https://github.com/michaelmjhhhh/pi-atelier/issues/73)).
+
+## 0.11.1 — 2026-09-24
+
+- Clarify Sidebar metrics with aligned labels and values while retaining separate colored, rounded panels. Remove duplicate idle status, label Git/session/tool details, and show context usage with a continuous fractional-fill meter. Trim metadata before clipping core panels in very short terminals ([#70](https://github.com/michaelmjhhhh/pi-atelier/issues/70)).
+
+## 0.11.0 — 2026-09-23
+
+- Add a global **Font mode** setting with a Plain text option for terminals without Nerd Fonts. Replace footer icons with labels and ordinary separators across the composer, complete footer, and display preview; preserve the default Nerd Font mode. Set `"nerdFont": false` in user configuration to use Plain text on startup ([#67](https://github.com/michaelmjhhhh/pi-atelier/issues/67)).
+- Integrate an original prompt-style session strip into the composer's top border, with colored model/workspace/Git groups, optional Nerd Font icons, and context percentage/capacity. Keep measured usage and timing in a quiet row below, preserve editor scroll hints, and fall back to the complete footer when the composer is unavailable or too narrow.
+- Exclude Sidebar text from fullscreen screen selection and copy when a mouse drag starts outside the transcript, including in the editor or Sidebar. Preserve transcript scrolling and modal selection.
+
+## 0.10.3 — 2026-09-22
+
+- Skip redundant HEAD and diff commands in Workspace Pulse when no tracked files have changed, preserving untracked-file reporting ([#61](https://github.com/michaelmjhhhh/pi-atelier/issues/61)).
+- Measure Sidebar height from row counts instead of repeatedly painting discarded panels, preserving panel order and existing content priorities ([#59](https://github.com/michaelmjhhhh/pi-atelier/issues/59)).
+- Suspend Git inspections, usage/history scans, and streaming token estimates while Atelier is disabled; cancel pending work, reject stale inspection results, and reconcile once on re-enable ([#57](https://github.com/michaelmjhhhh/pi-atelier/issues/57)). Preserve run/tool bookkeeping and reset partially observed response timing.
+- Fix Display Revert followed by Undo restoring an earlier Sidebar edit instead of the Display override.
+- Consolidate configuration resolution and dialog lifecycle handling, use one internal Sidebar visibility layout, and remove unused runtime options and redundant snapshot copying. Legacy persisted Sidebar visibility settings remain supported.
+
+## 0.10.2 — 2026-09-21
+
+- Preserve Sidebar text and borders beside inline images in regular and fullscreen mode ([#53](https://github.com/michaelmjhhhh/pi-atelier/issues/53)).
+- Temporarily hide visible transcript images while settings and other capturing overlays are open, then restore them on close without changing image data or reserved layout space. This behavior has been manually verified and accepted by the maintainer.
+
+## 0.10.1 — 2026-09-04
+
+- Remove unused internal formatters, configuration helpers, preview hooks, and legacy menu interfaces without changing the active UI or persisted configuration formats.
+- Simplify Sidebar panel identity and share TODO detail extraction across live updates and session reconstruction.
+- Replace redundant tests with active-path coverage, including concrete split-pane renderer installation and restoration.
+
+## 0.10.0 — 2026-08-28
+
+- Keep the Sidebar calm during an active Turn: Activity shows current work instead of a tool log, extra live tools fold into one row, and TODOS lists only the in-progress task.
+- Drop the idle full-height dock rule so the split meets the rounded panels cleanly; the warning divider appears only while resizing.
+
+## 0.9.0 — 2026-08-28
+
+- Frame the composer with a rounded box and inner padding while preserving Pi's thinking-level and bash-mode border colors, and dim Status Rail identity separators to emphasize activity.
+- Keep Sidebar content out of fullscreen transcript selection and copy by rendering it as a separate split-layout child; this raises the minimum supported Pi version to 0.84.0.
+- Delay Workspace Pulse Git inspections until Pi trusts the project.
+- Normalize UI-facing Windows paths to forward slashes while preserving valid POSIX backslashes.
+
+## 0.8.2 — 2026-08-19
+
+- Coalesce and serialize Workspace Pulse inspection requests so short Turns avoid duplicate Git work and overlapping inspections no longer run concurrently.
+- Preserve live tool-driven Workspace Pulse updates while guaranteeing a fresh inspection at Turn end and preventing retired sessions from publishing stale results.
+
+## 0.8.1 — 2026-08-12
+
+- Preserve fullscreen transcript mouse-wheel scrolling after Sidebar resize and visibility changes by leaving Pi's persistent mouse reporting enabled.
+- Simplify the README.
+
+## 0.8.0 — 2026-08-07
+
+- Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
+- Harden Atelier lifecycle teardown for session-owned overlays, exception-safe cleanup, stale Sidebar snapshots, candidate startup failures, and deferred Display saves.
+- Simplify Sidebar context rendering, contributed-panel validation, and Sidebar undo bookkeeping without changing behavior.
+
+## 0.7.2 — 2026-08-06
+
+- Restore the non-overlapping Sidebar split in both Pi 0.84 renderer modes while retaining the non-capturing overlay as the content and safe fallback seam.
+- Reserve regular-mode columns through the concrete `TuiMainScreen` prototype instead of capturing Pi 0.84's stable Proxy method, avoiding the recursive render path that caused startup hangs and sustained CPU usage.
+- Reserve fullscreen columns by wrapping Pi's existing layout root in an `HStack`, preserving the transcript viewport, editor, status area, scrolling, and Sidebar width without replacing `render`.
+- Restore fullscreen divider dragging by temporarily prioritizing Resize input ahead of Pi's viewport text-selection listener; remove that listener when Resize ends so ordinary selection remains unchanged.
+- Keep the main pane at least 64 columns wide, auto-hide the Sidebar below 92 terminal columns, reconcile regular/fullscreen renderer replacements after hide/show, restore owned renderer/layout adaptations during disposal, and fall back without modification on unsupported renderers.
+- Add Pi 0.84 regressions for the real regular renderer, fullscreen `renderLayoutFrame`, stable Proxy replacement, resizing and rollback, narrow terminals, adapter restoration, unsupported fallbacks, bounded rendering, and idle CPU safety.
+
+## 0.7.1 — 2026-08-06
+
+- Restore compatibility with Pi 0.84 by removing the recursive private TUI renderer wrapper and keeping the sidebar on Pi's supported non-capturing overlay seam.
+- Test against Pi Coding Agent and Pi TUI 0.84, including the stable proxied TUI reference introduced for runtime renderer switching.
+- Add a global, ordered Sidebar panel layout with draft editing, Save/Undo/default restore, unavailable-panel retention, and a namespaced structured contribution protocol.
+- Route built-in TODOS through the same ordered composition while preserving legacy parsing, hidden state, branch changes, and safe output collapse.
+- Add a global user Agent-panel visibility preference with persisted settings and independent Agent/TODOS rendering.
+- Add a TODOS sidebar panel for legacy Pi `todo` details and the optional `@juicesharp/rpiv-todo` task format, without installing or requiring that extension.
+- Show task progress and status indicators while keeping TODO state aligned with session initialization and session-tree branch changes.
+- Preserve valid hidden updates, clear valid empty lists, collapse only visible/enabled successful results containing recognized tasks, and leave errors or malformed results fully visible.
+
+## 0.7.0 — 2026-07-30
+
+- Add the responsive Display Settings Workspace with the real Status Rail preview, continuous preset/density/Segment editing, provenance, Session overrides, one-step Undo, Revert, and atomic User-default Save.
+- Replace the mixed root menu with a partitioned Atelier Control Center for Settings, Controls, and Actions, and add the direct `/atelier display` route.
+- Keep legacy `segments`, `ornament`, and `showExtensionStatuses` configuration load-compatible while making normalized `segmentLayout` the sole Brand and Statuses visibility source.
+- Add an opt-in `performance` Status Rail segment for live TTFT and estimated/final TPS, while preserving the existing default presets.
+
+## 0.6.0 — 2026-07-29
+
+- Add Workspace Pulse to summarize whole-worktree tracked changes, text additions/removals, count-only untracked files, binary files, changed submodules, and conflicts.
+- Keep inspecting, clean, non-repository, unavailable, and stale workspace states explicit while preserving the footer's compact dirty marker.
+- Refresh Workspace Pulse after debounced tool activity, Turn boundaries, and branch changes without polling, file watching, test execution, or untracked-content reads.
+
+## 0.5.0 — 2026-07-27
+
+- Keep fixed TTFT and TPS rows in the always-visible Activity panel, using `~` placeholders before values are available and `~`-marked live TPS estimates corrected from final usage when each response ends.
+- Start the session-scoped sidebar shown whenever Pi Atelier initializes, while preserving explicit on/off controls and narrow-terminal auto-hiding.
+
+## 0.4.0 — 2026-07-27
+
+- Add best-effort native completion notifications on macOS and Windows when a Pi turn settles or the explicit ask-user tool requests input; failures remain silent without a Terminal fallback.
+- Add a default-on, user-persisted completion notification toggle to the Atelier menu.
+- Keep notification content limited to project, session, and operational status.
+
+## 0.3.0 — 2026-07-23
+
+- Redesign the sidebar as a responsive panel dashboard with terminal-native framed sections and clearer metric alignment.
+- Add the Midnight Jewel treatment with semantic sapphire, amethyst, cyan, amber, and red panel crowns.
+- Add a subtle pulsing Agent jewel during active runs while keeping all other panels visually stable.
+- Introduce mixed typographic hierarchy for provider, thinking, and access metadata without changing sidebar behavior.
+- Add repository-local engineering skills and agent conventions for issue tracking, triage labels, and domain documentation.
+- Remove the legacy Superpowers plans and specifications.
+
+## 0.2.0 — 2026-07-22
+
+- Reorder the sidebar around agent status, a compact context meter, and a merged workspace summary for faster scanning.
+- Hide unavailable usage metrics and routine healthy extension statuses while surfacing explicit warning/error alerts.
+- Collapse active tool names by default, automatically hide expanded names below 40 columns, and add a persistent command/menu toggle.
+- Add a unified compact mode below 40 columns that reflows Agent, Workspace, Usage, Context, and Tools instead of truncating dense rows.
+- Size paired metrics and tool columns from their content so wide sidebars do not introduce oversized empty gaps.
+- Drop Tools, Usage, then Workspace as terminal height contracts.
+- Reserve footer ellipsis width so working-state animation never shifts the model or following workspace text.
+
+## 0.1.6
+
+- Reflow Pi beside the sidebar with an extension-only, non-overlapping split presentation.
+- Add session-scoped sidebar resizing through temporary `Ctrl+Shift+R` mouse and keyboard controls.
+- Keep the visible sidebar width synchronized while resizing and make divider dragging tolerant of near misses.
+- Remove the compaction-mode label from the sidebar context section.
+
+## 0.1.5
+
+- Add a packaged live-sidebar demo image and explicit sidebar toggle instructions.
+- Update npm metadata to describe both the status rail and live activity sidebar.
+- Show exact activated Pi tool names in a compact two-column sidebar list.
+- Wire live Pi run, turn, and tool events into the sidebar while keeping the footer compact and free of tool history.
+- Refine the full-height sidebar into a quiet, information-first utility rail with restrained semantic color and clearer alignment.
+- Convert `/atelier sidebar` into a session-scoped, non-capturing right-edge sidecar with command and menu on/off controls.
+
+## 0.1.4
+
+- Replace the ASCII preview with the current Pi Atelier screenshot on GitHub and npm.
+
+## 0.1.2
+
+- Animate the visible work-cycle phrase with orange italics and a shrinking three-to-one ellipsis.
+
+## 0.1.1
+
+- Replace the fixed `WORKING` footer label with one stable, randomly selected activity phrase per work cycle.
+
+## 0.1.0
+
+- Add the blue-purple-orange Midnight Amethyst palette with neutral `NO_COLOR` fallback.
+- Add semantic jewel-tone telemetry colors and five deterministic responsive layouts.
+- Add a wide dual-zone instrument rail with elastic workspace/telemetry alignment.
+- Add responsive editorial-luxe Pi footer.
+- Preserve Pi usage, cache, cost, subscription, context, and compaction metrics.
+- Add model, thinking-level, tool, display, and safe session controls.
+- Add editorial, minimal, and classic presets.
+- Add layered user and trusted-project JSON configuration.
+- Add width, lifecycle, failure, privacy, and package contract tests.
+- Require Pi 0.80.7+ and Node.js 22.19+.

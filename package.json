@@ -2,7 +2,7 @@
   "name": "pi-extensions",
   "version": "1.0.0",
   "private": true,
-  "description": "Full-stack deployment of a curated pi extension set: pi-usage, a TPS-patched opensec-pi-subagents build, plus third-party packages tracked at their latest release",
+  "description": "Full-stack deployment of a curated pi extension set: pi-usage, a TPS-patched opensec-pi-subagents build, a compiled pi-atelier build, plus third-party packages tracked at their latest release",
   "keywords": [
     "pi-package",
     "pi",
@@ -28,6 +28,7 @@
       "pi-usage/extensions/usage/index.ts",
       "pi-ollama-cloud/index.ts",
       "opensec-pi-subagents/dist-bun/index.js",
+      "pi-atelier/dist/index.js",
       "pi-commandcode-cloud/index.ts"
     ],
     "skills": [

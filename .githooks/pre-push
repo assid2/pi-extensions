@@ -34,9 +34,12 @@ while read -r local_ref local_sha remote_ref _remote_sha; do
 	esac
 done
 
-# --- the committed opensec-pi-subagents artifact must match a fresh build ------
+# --- the committed vendored artifacts must match a fresh build -----------------
 echo "pre-push: verifying opensec-pi-subagents artifact is current…"
 "$ROOT/scripts/opensec-subagents/update.sh" --check
+
+echo "pre-push: verifying pi-atelier artifact is current…"
+"$ROOT/scripts/pi-atelier/update.sh" --check
 
 # --- checks --------------------------------------------------------------------
 echo "pre-push: pi-usage checks…"

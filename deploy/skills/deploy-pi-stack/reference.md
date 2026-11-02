@@ -7,9 +7,8 @@ repository. It declares:
 
 | Package | Ref | What it provides |
 |---|---|---|
-| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | newest release tag (floating; entry is unversioned) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `opensec-pi-subagents` (vendored build with the TPS patch: per-agent + aggregate output tok/s for agents and workflows, plus the `SubagentWorkflow` tool), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
+| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | newest release tag (floating; entry is unversioned) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `opensec-pi-subagents` (vendored build with the TPS patch: per-agent + aggregate output tok/s for agents and workflows, plus the `SubagentWorkflow` tool), `pi-atelier` (compiled from vendored upstream source: status rail + sidebar host, the single owner of pi's one custom footer and editor slot), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
 | `npm:@monotykamary/pi-tps` | latest (unpinned) | tokens/second display |
-| `npm:pi-atelier` | latest (unpinned) | footer/status-rail + sidebar host; the single owner of pi's one custom footer and editor slot |
 | `git:github.com/obra/superpowers` | latest (unpinned) | superpowers skill suite |
 | `npm:remote-pi` | latest (unpinned) | official npm package (never forked); only its relay footer glyph is post-patched by `host-setup.sh` |
 
@@ -43,27 +42,49 @@ npm package, installed as-is (never forked); only its relay footer glyph is post
 
 ### The vendored TPS build
 
-`opensec-pi-subagents` is not taken from npm. The npm artifact is a prebuilt Bun bundle with no
-source, and the TPS change (per-agent + aggregate output tokens/second in the Agents widget, workflow card and inspector) has
-to live in source. The repository therefore carries:
+- **Our modified extensions ship in-tree** (`pi-usage`, `opensec-pi-subagents`, `pi-atelier`,
+  `pi-ollama-cloud`, `pi-commandcode-cloud`), loaded from the monorepo and tracked by its newest
+  release tag. `pi-atelier` is pristine upstream source compiled in-tree; the others carry local
+  patches. The external published `npm:pi-ollama-cloud` is **retired** and removed on apply, so it
+  cannot double-load alongside the vendored prefix-aware fork; `npm:pi-status-footer` is likewise
+  retired — with `pi-atelier` hosting the one custom footer it would silently fight it for the
+  single `setFooter` slot. `npm:@tintinweb/pi-subagents`, `npm:@quintinshaw/pi-dynamic-workflows`,
+  and the npm copies `npm:opensec-pi-subagents` / `npm:pi-atelier` are retired for the same
+  double-load reason: those extensions load from this repository's vendored/compiled builds.
+  `npm:remote-pi` is the official npm package — we do not fork it; only its relay footer glyph is
+  post-patched by `host-setup.sh`.
+
+### The vendored builds
+
+Two extensions are built here rather than installed from npm. `opensec-pi-subagents` because the
+npm artifact is a prebuilt Bun bundle with no source and the TPS change (per-agent + aggregate
+output tokens/second in the Agents widget, workflow card and inspector) has to live in source;
+`pi-atelier` so remote installs load a compiled bundle while the full upstream source remains
+available in the repository.
 
 | Path | Role |
 |---|---|
 | `vendor/opensec-pi-subagents/` | pristine upstream source, commit pinned in `UPSTREAM` |
 | `patches/opensec-pi-subagents/0001-tps.patch` | the durable TPS change |
-| `opensec-pi-subagents/` | generated loadable package (`dist-bun/index.js`, one ESM bundle) |
+| `opensec-pi-subagents/` | generated package (`dist-bun/index.js`, one ESM bundle; `croner`/`nanoid` embedded) |
 | `scripts/opensec-subagents/update.sh` | apply patch → typecheck → tsc → bun → verify |
+| `vendor/pi-atelier/` | pristine upstream source, commit pinned in `UPSTREAM` |
+| `patches/pi-atelier/` | future local patches, applied in filename order (empty today) |
+| `pi-atelier/` | generated package (`dist/index.js`, one ESM bundle; host modules external) |
+| `scripts/pi-atelier/update.sh` | apply patches → typecheck → tests → bun → verify |
 
-Updating upstream is one command:
+Updating upstream is one command per package:
 
 ```bash
-scripts/opensec-subagents/update.sh --sync    # fetch master, vendor, reapply, compile
+scripts/opensec-subagents/update.sh --sync    # fetch upstream, reapply, compile
+scripts/pi-atelier/update.sh --sync          # fetch main, reapply patches, compile
 scripts/opensec-subagents/update.sh --check   # pre-push: artifact must be current
+scripts/pi-atelier/update.sh --check
 ```
 
-If the patch no longer applies, `--sync` stops and prints the rebase/regenerate instructions; it
-never commits a half-patched build. `croner`/`nanoid` are bundled, so the artifact needs no
-runtime `node_modules` on a deployed machine.
+If a patch no longer applies, the updater stops and prints the rebase/regenerate instructions; it
+never commits a half-patched build. Neither artifact needs a runtime `node_modules` on a deployed
+machine.
 
 ## The deployment contract
 
@@ -77,8 +98,8 @@ runtime `node_modules` on a deployed machine.
   them unpinned and runs `pi update` for each one on every apply, so they always take the latest
   release. Never add a version to a third-party entry unless you deliberately want to freeze it.
 - **Retired entries.** `deployment.json` may list `retired` package specs (for example
-  `npm:@tintinweb/pi-subagents`, dropped from the stack, `npm:@quintinshaw/pi-dynamic-workflows`
-  and the npm copy `npm:opensec-pi-subagents`, superseded by the vendored build,
+  `npm:@tintinweb/pi-subagents`, dropped from the stack, `npm:@quintinshaw/pi-dynamic-workflows`,
+  the npm copies `npm:opensec-pi-subagents` / `npm:pi-atelier`, superseded by the vendored builds,
   `npm:pi-ollama-cloud`, which moved into this repository as a vendored fork, and
   `npm:pi-status-footer`, the former competing footer owner). `apply.sh` removes any matching
   settings entry with `pi remove`, even in additive mode —

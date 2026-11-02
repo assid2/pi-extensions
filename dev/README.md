@@ -22,6 +22,9 @@ dedups away the managed clone).
 | `vendor/opensec-pi-subagents/src/**` or `patches/opensec-pi-subagents/**` | `scripts/opensec-subagents/update.sh` (patch → tsc → bun) → pi hot-reloads via `/dev-reload` |
 | `vendor/opensec-pi-subagents/package.json`, `tsconfig*.json` | rebuild + reload |
 | `opensec-pi-subagents/**` (the generated artifact) | reload |
+| `vendor/pi-atelier/{src,extensions}/**` or `patches/pi-atelier/**` | `scripts/pi-atelier/update.sh` (patches → typecheck/tests → bun) → pi hot-reloads via `/dev-reload` |
+| `vendor/pi-atelier/package.json`, `tsconfig*.json` | rebuild + reload |
+| `pi-atelier/**` (the generated artifact) | reload |
 | `skills/**`, `deploy/skills/**` | reload (no build step) |
 | `pi-commandcode-cloud/*.ts` (TypeScript, loaded directly) | reload |
 | `pi-usage/extensions/**` (TypeScript, loaded directly) | reload |
@@ -29,7 +32,7 @@ dedups away the managed clone).
 - A **failed build does not reload** — pi keeps the last working code and shows the
   compiler error.
 - Edits made while pi was not running are picked up on the next session start
-  (`dist/` older than `src/` triggers a rebuild).
+  (an artifact older than its inputs triggers a rebuild).
 - Commands: `/dev-reload` (rebuild if needed + reload now), `/dev-watch on|off|status`.
 - Env: `PI_EXTENSIONS_DEV_ROOT` (default: the watched checkout this file belongs to),
   `PI_EXTENSIONS_DEV_WATCH=0` to disable, `PI_EXTENSIONS_DEV_QUIET=1` for silence.
@@ -38,16 +41,16 @@ dedups away the managed clone).
 
 Just ask pi (or run git yourself). The hooks in `.githooks/` guarantee correctness:
 
-- **pre-commit** — if the vendor source or the TPS patch is staged, rebuilds
-  `opensec-pi-subagents/` and stages it, so the committed artifact always matches
-  its inputs. Also rejects a `deployment.json` whose monorepo self-entry carries a
-  version/tag — it must stay unversioned, because `apply.sh` floats it to the newest
-  release tag.
-- **pre-push** — verifies the committed artifact is current
-  (`scripts/opensec-subagents/update.sh --check`), runs the `pi-usage` and
-  `pi-commandcode-cloud` checks (typecheck + tests + Biome), and for a pushed `v*`
-  tag verifies that the tag equals `deployment.json` `version` (the self-entry is
-  unversioned, so there is no self-pin check).
+- **pre-commit** — if a vendored source or its patches is staged, rebuilds that
+  package (`opensec-pi-subagents/` or `pi-atelier/`) and stages it, so the committed
+  artifact always matches its inputs. Also rejects a `deployment.json` whose monorepo
+  self-entry carries a version/tag — it must stay unversioned, because `apply.sh`
+  floats it to the newest release tag.
+- **pre-push** — verifies both committed artifacts are current
+  (`scripts/{opensec-subagents,pi-atelier}/update.sh --check`), runs the `pi-usage`
+  and `pi-commandcode-cloud` checks (typecheck + tests + Biome), and for a pushed
+  `v*` tag verifies that the tag equals `deployment.json` `version` (the self-entry
+  is unversioned, so there is no self-pin check).
 
 Escape hatches: `git commit --no-verify`, `git push --no-verify`.
 

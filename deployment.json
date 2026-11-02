@@ -4,8 +4,7 @@
     "ssh://git@ssh.github.com:443/assid2/pi-extensions.git",
     "npm:@monotykamary/pi-tps",
     "git:github.com/obra/superpowers",
-    "npm:remote-pi",
-    "npm:pi-atelier"
+    "npm:remote-pi"
   ],
   "hostSetup": {
     "settings": { "terminal.trueColor": true },
@@ -17,6 +16,7 @@
     "npm:@tintinweb/pi-subagents",
     "npm:@quintinshaw/pi-dynamic-workflows",
     "npm:opensec-pi-subagents",
+    "npm:pi-atelier",
     "npm:pi-ollama-cloud",
     "npm:pi-status-footer"
   ]

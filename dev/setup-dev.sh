@@ -36,6 +36,14 @@ else
   echo "opensec-pi-subagents/ is current"
 fi
 
+say "build pi-atelier (patches -> bun bundle)"
+if [ ! -f "$ROOT/pi-atelier/dist/index.js" ] || \
+   [ "$(find "$ROOT/vendor/pi-atelier/src" "$ROOT/vendor/pi-atelier/extensions" "$ROOT/patches/pi-atelier" -type f -newer "$ROOT/pi-atelier/dist/index.js" -print -quit)" ]; then
+  "$ROOT/scripts/pi-atelier/update.sh"
+else
+  echo "pi-atelier/ is current"
+fi
+
 say "git hooks"
 git -C "$ROOT" config core.hooksPath "$ROOT/.githooks"
 chmod +x "$ROOT/.githooks/"* 2>/dev/null || true
@@ -51,13 +59,15 @@ pi install "$ROOT/pi-usage"
 pi install "$ROOT/pi-commandcode-cloud"
 pi install "$ROOT/pi-ollama-cloud"
 pi install "$ROOT/opensec-pi-subagents"
+pi install "$ROOT/pi-atelier"
 "$ROOT/deploy/apply.sh"
 "$ROOT/deploy/host-setup.sh"
 
 say "done"
 cat <<EOF
-Dev loop: edit sources under this checkout — pi rebuilds opensec-pi-subagents from
-vendor/ + patches/ and hot-reloads itself; pi-usage and pi-commandcode-cloud are
+Dev loop: edit sources under this checkout — pi rebuilds opensec-pi-subagents and
+pi-atelier from vendor/ + patches/ and hot-reloads itself; pi-usage and
+pi-commandcode-cloud are
 loaded straight from TypeScript. Verify with
 \`./deploy/apply.sh --check\`, commit/push with plain git (hooks keep dist/ and
 release tags honest).
