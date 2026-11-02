@@ -4,26 +4,99 @@
 #        commit 76fd35c4a5e814251badd1f7f523557d3ea7fcf9 (v0.20.9)
 # Apply: git apply -p1 <this file>   (from the source root)
 #
-# What it adds:
-#   src/token-rate.ts            rolling 10 s sampler over cumulative OUTPUT
-#                                tokens (input/cache are excluded: they step at
-#                                API boundaries and spike the rate)
-#   src/ui/agent-widget.ts       samples each running agent every frame; shows
-#                                `N tok/s` per row and on the `Agents` heading
-#   test/token-rate.test.ts      unit tests for the sampler
-#   test/agent-widget-tps.test.ts  widget-level per-agent + aggregate rates
+# What it adds (Agents widget + workflow card/inspector):
+#   src/token-rate.ts              rolling 10 s sampler over cumulative OUTPUT
+#                                  tokens; input/cache are excluded because they
+#                                  step at API boundaries and spike the rate.
+#                                  A counter reset (retried child) starts a new
+#                                  window instead of reading as a stall.
+#   src/ui/agent-widget.ts         per-agent + heading rate for top-level agents
+#   src/workflow/rates.ts          joins workflow entries to AgentRecord through
+#                                  recordId and samples each running child
+#   src/ui/workflow-card.ts        aggregate on the run header, rate per task row
+#   src/ui/workflow-dialog.ts      same on the inspector header and task rows
+#   src/ui/workflow-menu.ts        feeds the inspector rates
+#   src/index.ts                   feeds the card rates and drives a 1 s redraw
+#   test/*                         sampler, widget, card, dialog, rates tests
+#
+# The sampler reads live `AgentRecord.lifetimeUsage.output`, not the workflow
+# progress log: the log only carries totals once an agent settles.
 #
 # Regenerate after editing the working tree:
 #   cd <source root> && git add -A && git diff --cached -- src test > 0001-tps.patch
-# The updater (scripts/opensec-subagents/update.sh) applies this with --3way;
-# a rejected hunk means upstream moved the widget code, so rebase the patch.
+# The updater applies this with --3way; a rejected hunk means upstream moved the
+# sampled/render code, so rebase the patch (update.sh prints the commands).
 #
+diff --git a/src/index.ts b/src/index.ts
+index 73277b4..eb26653 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -70,7 +70,7 @@ import { FleetList, type FleetUICtx, type FleetWorkflow } from "./ui/fleet-list.
+ import { RefreshTicker } from "./ui/refresh-ticker.js";
+ import { showSchedulesMenu } from "./ui/schedule-menu.js";
+ import { selectItem } from "./ui/select-item.js";
+-import { renderWorkflowCard, renderWorkflowEntryCard } from "./ui/workflow-card.js";
++import { renderWorkflowCard, renderWorkflowEntryCard, WORKFLOW_TICK_MS } from "./ui/workflow-card.js";
+ import { openWorkflowFromFleet, showWorkflowsMenu, type WorkflowMenuDeps } from "./ui/workflow-menu.js";
+ import { getLifetimeCost, getLifetimeTotal, getSessionContextPercent, type LifetimeUsage, PendingUsagePool, toReportedUsage } from "./usage.js";
+ import { decideWorkflowCollision, FOREIGN_WORKFLOW_TOOL_NAMES } from "./workflow/collisions.js";
+@@ -79,6 +79,7 @@ import { createWorkflowHost } from "./workflow/host.js";
+ import { appendJournal, readJournal, type WorkflowJournalEntry } from "./workflow/journal.js";
+ import { extractMeta, type WorkflowMeta, workflowCallName } from "./workflow/meta.js";
+ import { elapsedMs } from "./workflow/progress.js";
++import { clearWorkflowRates, workflowRates } from "./workflow/rates.js";
+ import { runWorkflow } from "./workflow/runtime.js";
+ import { resolveWorkflowScript } from "./workflow/saved.js";
+ import { readWorkflowScriptFile } from "./workflow/script-file.js";
+@@ -3471,8 +3472,10 @@ Terse command-style prompts produce shallow, generic work.
+         },
+       });
+       completeWorkflowTask(task, result);
++      clearWorkflowRates(task.id);
+     } catch (err) {
+       failWorkflowTask(task, err instanceof Error ? err.message : String(err));
++      clearWorkflowRates(task.id);
+     }
+   }
+ 
+@@ -3578,6 +3581,23 @@ Terse command-style prompts produce shallow, generic work.
+       // No task means the run predates this session (a reloaded transcript) or
+       // the call never started one — show what `execute` said instead.
+       if (renderContext.isError || !task) return new Text(text, 0, 0);
++      // A background run's transcript row is not redrawn by anything while the
++      // parent is idle, so drive the once-a-second header/clock/rate tick here.
++      // `state` is shared per tool row, so exactly one timer is scheduled.
++      const tickState = (renderContext.state ?? {}) as { workflowTick?: ReturnType<typeof setTimeout> };
++      if (renderContext.state === undefined) renderContext.state = tickState;
++      if (task.status === "running") {
++        if (tickState.workflowTick === undefined) {
++          tickState.workflowTick = setTimeout(() => {
++            tickState.workflowTick = undefined;
++            try { renderContext.invalidate(); } catch { /* row is gone */ }
++          }, WORKFLOW_TICK_MS);
++          tickState.workflowTick.unref?.();
++        }
++      } else if (tickState.workflowTick !== undefined) {
++        clearTimeout(tickState.workflowTick);
++        tickState.workflowTick = undefined;
++      }
+       return renderWorkflowCard(
+         {
+           progress: task.workflowProgress,
+@@ -3591,6 +3611,7 @@ Terse command-style prompts produce shallow, generic work.
+           meta: task.meta,
+           agentCount: task.agentCount,
+           totalTokens: task.totalTokens,
++          rates: workflowRates(task, id => manager.getRecord(id)),
+         },
+         theme,
+       );
 diff --git a/src/token-rate.ts b/src/token-rate.ts
 new file mode 100644
-index 0000000..70566eb
+index 0000000..a8abfff
 --- /dev/null
 +++ b/src/token-rate.ts
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,73 @@
 +/**
 + * token-rate.ts — rolling output-token/s sampler for the live agent surfaces.
 + *
@@ -46,6 +119,10 @@ index 0000000..70566eb
 +/** Push a (ts, total) sample into a rolling sample list, collapsing same-instant repeats. */
 +function pushSample(samples: SampleList, now: number, total: number): void {
 +  const last = samples[samples.length - 1];
++  // A counter can reset (a retried workflow agent gets a fresh record). Start a
++  // new window rather than reading the drop as a zero rate until the old
++  // samples age out.
++  if (last && total < last.total) samples.length = 0;
 +  // Collapse repeat renders within the same instant (e.g. width recalcs).
 +  if (last && last.ts === now && last.total === total) return;
 +  samples.push({ ts: now, total });
@@ -165,6 +242,260 @@ index 34f0df0..842b1fc 100644
  
      if (totalBody <= maxBody) {
        // Everything fits — add all lines and fix up connectors for the last item.
+diff --git a/src/ui/workflow-card.ts b/src/ui/workflow-card.ts
+index 8747158..27c6d0f 100644
+--- a/src/ui/workflow-card.ts
++++ b/src/ui/workflow-card.ts
+@@ -45,6 +45,7 @@ import {
+   type WorkflowEntry,
+   type WorkflowRunStatus,
+ } from "../workflow/progress.js";
++import type { WorkflowRates } from "../workflow/rates.js";
+ import type { Theme } from "./agent-widget.js";
+ import { sanitizeTerminalText } from "./terminal-text.js";
+ 
+@@ -164,6 +165,11 @@ export interface WorkflowCardInput {
+   agentCount?: number;
+   /** Total tokens for the size warning; summed from the entries when omitted. */
+   totalTokens?: number;
++  /**
++   * Live output tok/s, resolved from the child records by the caller. The card
++   * stays pure: it renders the numbers it is handed, it does not read records.
++   */
++  rates?: WorkflowRates;
+   agentCap?: number;
+   tokenCap?: number;
+   now?: number;
+@@ -244,12 +250,13 @@ export const REPLAYED_ANNOTATION = "from resume journal";
+  * model, tokens, toolCalls, durationMs. Absent values drop out entirely rather
+  * than rendering a placeholder.
+  */
+-export function agentStatSegments(entry: WorkflowAgentEntry): string[] {
++export function agentStatSegments(entry: WorkflowAgentEntry, rate = 0): string[] {
+   const parts: string[] = [];
+   if (entry.agentType) parts.push(entry.agentType);
+   const model = formatModel(entry);
+   if (model) parts.push(model);
+   if (entry.tokens) parts.push(formatCompactTokens(entry.tokens));
++  if (rate > 0) parts.push(`${Math.round(rate)} tok/s`);
+   if (entry.toolCalls) parts.push(`${entry.toolCalls} tool call${entry.toolCalls === 1 ? "" : "s"}`);
+   if (entry.durationMs) parts.push(formatDuration(entry.durationMs));
+   return parts;
+@@ -317,6 +324,8 @@ export function layoutWorkflowCard(input: WorkflowCardInput): WorkflowCardLine[]
+   const { agents, logs } = collapse(input.progress);
+   const totals = stats(input.progress, input.agentCount ?? 0);
+   const head = header(input.task, input.meta, groups, input.agentCount ?? 0, now);
++  const runRate = input.rates?.runRate ?? 0;
++  const headStats = runRate > 0 ? `${head.stats} · ${Math.round(runRate)} tok/s` : head.stats;
+ 
+   const lines: WorkflowCardLine[] = [];
+ 
+@@ -332,10 +341,10 @@ export function layoutWorkflowCard(input: WorkflowCardInput): WorkflowCardLine[]
+         { text: head.name, color: "muted" },
+       ]
+     : [{ text: "  " }, { text: head.name, color: "toolTitle", bold: true }];
+-  const statsWidth = visibleWidth(head.stats);
++  const statsWidth = visibleWidth(headStats);
+   const clampedLeft = clampLine(left, Math.max(0, width - statsWidth - 1));
+   const gap = Math.max(1, width - lineWidth(clampedLeft) - statsWidth);
+-  lines.push([...clampedLeft, { text: " ".repeat(gap) }, { text: head.stats, color: "dim" }]);
++  lines.push([...clampedLeft, { text: " ".repeat(gap) }, { text: headStats, color: "dim" }]);
+ 
+   if (head.subtext) lines.push(clampLine([{ text: `  ${head.subtext}`, color: "dim" }], width));
+ 
+@@ -386,8 +395,8 @@ export function layoutWorkflowCard(input: WorkflowCardInput): WorkflowCardLine[]
+       // renders as a tick with no tokens and no duration — indistinguishable
+       // from one that somehow did the work for free.
+       const statParts = entry.cached
+-        ? [REPLAYED_ANNOTATION, ...agentStatSegments(entry)]
+-        : agentStatSegments(entry);
++        ? [REPLAYED_ANNOTATION, ...agentStatSegments(entry, input.rates?.agentRate(entry.index) ?? 0)]
++        : agentStatSegments(entry, input.rates?.agentRate(entry.index) ?? 0);
+       const pad = Math.max(0, labelColumn - visibleWidth(entry.label));
+       segments.push({ text: statParts.length > 0 ? entry.label + " ".repeat(pad) : entry.label });
+       for (const part of statParts) {
+diff --git a/src/ui/workflow-dialog.ts b/src/ui/workflow-dialog.ts
+index a207d32..cffb712 100644
+--- a/src/ui/workflow-dialog.ts
++++ b/src/ui/workflow-dialog.ts
+@@ -61,6 +61,7 @@ import {
+   type WorkflowDisplayState,
+   type WorkflowEntry,
+ } from "../workflow/progress.js";
++import type { WorkflowRates } from "../workflow/rates.js";
+ import { SPINNER, type Theme } from "./agent-widget.js";
+ import { sanitizeTerminalText } from "./terminal-text.js";
+ import {
+@@ -288,6 +289,8 @@ export interface WorkflowDialogSource {
+   meta?: WorkflowMeta;
+   /** Agents the runtime has scheduled, which can exceed those that reported. */
+   agentCount?: number;
++  /** Live output tok/s, resolved from the child records by the caller. */
++  rates?: WorkflowRates;
+ }
+ 
+ export interface WorkflowDialogInput extends WorkflowDialogSource {
+@@ -635,6 +638,7 @@ function agentRow(options: {
+   workflowActive: boolean;
+   spinnerFrame: number;
+   now: number;
++  rates?: WorkflowRates;
+ }): WorkflowCardLine {
+   const { entry, selected, glyphs, width } = options;
+   const display = displayState(entry, options.workflowActive);
+@@ -652,7 +656,7 @@ function agentRow(options: {
+ 
+   const model = formatModel(entry);
+   if (model) head.push({ text: ` ${model}`, color: "dim" });
+-  for (const part of [...subStatusAnnotations(entry, display, options.now), ...rowStatSegments(entry)]) {
++  for (const part of [...subStatusAnnotations(entry, display, options.now), ...rowStatSegments(entry, options.rates?.agentRate(entry.index) ?? 0)]) {
+     head.push({ text: " · ", color: "dim" }, { text: part, color: "dim" });
+   }
+   // The duration sits flush right, so a column of rows reads as a column of
+@@ -662,8 +666,11 @@ function agentRow(options: {
+ }
+ 
+ /** The agent row's dot-separated tail. The model is not in it — it leads. */
+-function rowStatSegments(entry: WorkflowAgentEntry): string[] {
+-  return entry.tokens ? [`${formatCompactTokens(entry.tokens)} tok`] : [];
++function rowStatSegments(entry: WorkflowAgentEntry, rate = 0): string[] {
++  const parts: string[] = [];
++  if (entry.tokens) parts.push(`${formatCompactTokens(entry.tokens)} tok`);
++  if (rate > 0) parts.push(`${Math.round(rate)} tok/s`);
++  return parts;
+ }
+ 
+ /**
+@@ -690,11 +697,13 @@ export function layoutWorkflowDialog(input: WorkflowDialogInput): WorkflowCardLi
+ 
+   // ---- Header: the run's name, then its description with the stats flush right.
+   const head = header(input.task, input.meta, view.groups, input.agentCount ?? 0, now);
++  const runRate = input.rates?.runRate ?? 0;
++  const headStats = runRate > 0 ? `${head.stats} · ${Math.round(runRate)} tok/s` : head.stats;
+   lines.push(clampLine([{ text: " " }, { text: head.name, color: "toolTitle", bold: true }], width));
+   lines.push(
+     rightAlign(
+       head.subtext ? [{ text: " " }, { text: head.subtext, color: "dim" }] : [],
+-      [{ text: head.stats, color: "dim" }],
++      [{ text: headStats, color: "dim" }],
+       width,
+     ),
+   );
+@@ -759,6 +768,7 @@ export function layoutWorkflowDialog(input: WorkflowDialogInput): WorkflowCardLi
+           workflowActive: view.workflowActive,
+           spinnerFrame,
+           now,
++          rates: input.rates,
+         }),
+       );
+     }
+diff --git a/src/ui/workflow-menu.ts b/src/ui/workflow-menu.ts
+index dcb2cbe..fdd06c0 100644
+--- a/src/ui/workflow-menu.ts
++++ b/src/ui/workflow-menu.ts
+@@ -16,6 +16,7 @@
+ 
+ import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
+ import type { AgentRecord } from "../types.js";
++import { workflowRates } from "../workflow/rates.js";
+ import { pauseWorkflowTask, resumeWorkflowTask, type WorkflowTask } from "../workflow/task.js";
+ import { WorkflowDialog } from "./workflow-dialog.js";
+ 
+@@ -85,6 +86,7 @@ export async function showWorkflowDialog(
+           },
+           meta: task.meta,
+           agentCount: task.agentCount,
++          rates: workflowRates(task, deps.getRecord),
+         }),
+         theme,
+         done,
+diff --git a/src/workflow/rates.ts b/src/workflow/rates.ts
+new file mode 100644
+index 0000000..6373b85
+--- /dev/null
++++ b/src/workflow/rates.ts
+@@ -0,0 +1,81 @@
++/**
++ * rates.ts — live output tok/s for a workflow run and its agent rows.
++ *
++ * The workflow progress log stores only completed totals (`entry.tokens`); the
++ * live figure lives on the child's `AgentRecord.lifetimeUsage.output`, which the
++ * manager updates on every `message_end`. This module joins the two: it walks the
++ * run's running entries, resolves each `recordId` through the caller's record
++ * lookup, and feeds the shared rolling sampler (`token-rate.ts`) under
++ * `workflow:<taskId>` and `workflow:<taskId>:<index>`.
++ *
++ * Same rules as the Agents widget: output tokens only (input/cache step at API
++ * boundaries and spike the rate), and a stalled agent stops being fed so its
++ * window ages out to 0.
++ */
++
++import { clearTokenRate, clearTokenRates, sampleTokenRate, tokenRate } from "../token-rate.js";
++import type { AgentRecord } from "../types.js";
++import { collapse, displayState } from "./progress.js";
++import type { WorkflowTask } from "./task.js";
++
++/** Rates the card and dialog render. `runRate` is the aggregate over running agents. */
++export interface WorkflowRates {
++  /** Generated output tokens/second for the agent entry with this stable `index`. */
++  agentRate(index: number): number;
++  /** Aggregate output tokens/second over the run's running agents. */
++  runRate: number;
++}
++
++const runKey = (taskId: string) => `workflow:${taskId}`;
++const agentPrefix = (taskId: string) => `workflow:${taskId}:`;
++const agentKey = (taskId: string, index: number) => `${agentPrefix(taskId)}${index}`;
++
++const ZERO: WorkflowRates = { agentRate: () => 0, runRate: 0 };
++
++/**
++ * Sample and return the live rates for `task`.
++ *
++ * `getRecord` is the manager's lookup (or the dialog's injected equivalent).
++ * Only a running run reports non-zero rates: a paused run accrues no output and
++ * a settled one is cleared by {@link clearWorkflowRates}.
++ */
++export function workflowRates(
++  task: WorkflowTask,
++  getRecord: (id: string) => AgentRecord | undefined,
++  now: number = Date.now(),
++): WorkflowRates {
++  if (task.status !== "running") return ZERO;
++
++  const running = collapse(task.workflowProgress).agents.filter(
++    (entry) => displayState(entry, true) === "running",
++  );
++  if (running.length === 0) {
++    clearTokenRate(runKey(task.id));
++    clearTokenRates(agentPrefix(task.id));
++    return ZERO;
++  }
++
++  let total = 0;
++  for (const entry of running) {
++    if (entry.recordId === undefined) continue;
++    const record = getRecord(entry.recordId);
++    // A finished child's output plateaus; letting it into the aggregate would
++    // freeze the total while its row still read "running" during the settle.
++    if (record === undefined || record.status !== "running") continue;
++    const output = record.lifetimeUsage.output;
++    total += output;
++    sampleTokenRate(agentKey(task.id, entry.index), output, now);
++  }
++  sampleTokenRate(runKey(task.id), total, now);
++
++  return {
++    agentRate: (index) => tokenRate(agentKey(task.id, index)),
++    runRate: tokenRate(runKey(task.id)),
++  };
++}
++
++/** Drop a run's samples when it settles so the maps cannot grow unbounded. */
++export function clearWorkflowRates(taskId: string): void {
++  clearTokenRate(runKey(taskId));
++  clearTokenRates(agentPrefix(taskId));
++}
 diff --git a/test/agent-widget-tps.test.ts b/test/agent-widget-tps.test.ts
 new file mode 100644
 index 0000000..6960734
@@ -253,10 +584,10 @@ index 0000000..6960734
 +});
 diff --git a/test/token-rate.test.ts b/test/token-rate.test.ts
 new file mode 100644
-index 0000000..8279172
+index 0000000..d0826b5
 --- /dev/null
 +++ b/test/token-rate.test.ts
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,63 @@
 +import { beforeEach, describe, expect, it } from "vitest";
 +import { clearTokenRate, clearTokenRates, sampleTokenRate, tokenRate } from "../src/token-rate.js";
 +
@@ -292,6 +623,16 @@ index 0000000..8279172
 +    expect(tokenRate("a")).toBeCloseTo(90);
 +  });
 +
++  it("restarts the window when a cumulative counter resets", () => {
++    sampleTokenRate("a", 900, 1_000);
++    sampleTokenRate("a", 950, 2_000);
++    // A retry replaced the record: output starts over at 10.
++    sampleTokenRate("a", 10, 3_000);
++    expect(tokenRate("a")).toBe(0);
++    sampleTokenRate("a", 110, 4_000);
++    expect(tokenRate("a")).toBeCloseTo(100);
++  });
++
 +  it("keeps keys independent and clears by prefix", () => {
 +    sampleTokenRate("agent:1", 0, 0);
 +    sampleTokenRate("agent:1", 100, 1_000);
@@ -310,3 +651,154 @@ index 0000000..8279172
 +    expect(tokenRate("agents")).toBe(0);
 +  });
 +});
+diff --git a/test/workflow-dialog.test.ts b/test/workflow-dialog.test.ts
+index 0f6f7a3..9bd7e54 100644
+--- a/test/workflow-dialog.test.ts
++++ b/test/workflow-dialog.test.ts
+@@ -1148,3 +1148,14 @@ describe("component availability", () => {
+     instance.dispose();
+   });
+ });
++
++describe("dialog token rates", () => {
++  it("renders the run and per-agent rates when supplied", () => {
++    const lines = dialog({
++      progress: [agentEntry({ index: 0, label: "review:bugs", state: "progress", startedAt: START })],
++      rates: { agentRate: () => 42, runRate: 150 },
++    });
++    expect(lines.join("\n")).toContain("150 tok/s");
++    expect(lines.join("\n")).toContain("42 tok/s");
++  });
++});
+diff --git a/test/workflow-rates.test.ts b/test/workflow-rates.test.ts
+new file mode 100644
+index 0000000..4f88622
+--- /dev/null
++++ b/test/workflow-rates.test.ts
+@@ -0,0 +1,95 @@
++import { beforeEach, describe, expect, it } from "vitest";
++import { clearTokenRates } from "../src/token-rate.js";
++import { clearWorkflowRates, workflowRates } from "../src/workflow/rates.js";
++
++function entry(over: Record<string, unknown> = {}) {
++  return {
++    type: "workflow_agent" as const,
++    index: 0,
++    label: "agent",
++    state: "progress" as const,
++    startedAt: 0,
++    recordId: "r1",
++    ...over,
++  };
++}
++
++function task(over: Record<string, unknown> = {}) {
++  return {
++    id: "wf_test",
++    status: "running",
++    workflowProgress: [entry()],
++    agentCount: 1,
++    ...over,
++  } as never;
++}
++
++function record(output: number, status = "running") {
++  return { status, lifetimeUsage: { input: 0, output, cacheWrite: 0 } } as never;
++}
++
++beforeEach(() => clearTokenRates(""));
++
++describe("workflowRates", () => {
++  it("samples per-agent and aggregate output tokens/second", () => {
++    const rec = record(100);
++    const getRecord = (id: string) => (id === "r1" ? rec : undefined);
++    const t = task();
++
++    // One sample is not a rate.
++    expect(workflowRates(t, getRecord, 1_000).runRate).toBe(0);
++
++    rec.lifetimeUsage.output = 300;
++    const rates = workflowRates(t, getRecord, 3_000);
++    expect(rates.agentRate(0)).toBeCloseTo(100);
++    expect(rates.runRate).toBeCloseTo(100);
++  });
++
++  it("sums only running children with a manager record", () => {
++    const a = record(100);
++    const b = record(500);
++    const c = record(9_000, "completed");
++    const progress = [
++      entry({ index: 0, recordId: "a" }),
++      entry({ index: 1, recordId: "b" }),
++      entry({ index: 2, recordId: "c" }),
++      entry({ index: 3, recordId: undefined }),
++    ];
++    const getRecord = (id: string) => ({ a, b, c })[id];
++    const t = task({ workflowProgress: progress, agentCount: 4 });
++
++    workflowRates(t, getRecord, 1_000);
++    a.lifetimeUsage.output = 300;
++    b.lifetimeUsage.output = 700;
++    const rates = workflowRates(t, getRecord, 3_000);
++
++    expect(rates.agentRate(0)).toBeCloseTo(100);
++    expect(rates.agentRate(1)).toBeCloseTo(100);
++    expect(rates.agentRate(2)).toBe(0);
++    expect(rates.runRate).toBeCloseTo(200);
++  });
++
++  it("reports zero for a paused or settled run", () => {
++    const rec = record(100);
++    const getRecord = () => rec;
++    expect(workflowRates(task({ status: "paused" }), getRecord, 1_000)).toEqual({
++      agentRate: expect.any(Function),
++      runRate: 0,
++    });
++    expect(workflowRates(task({ status: "completed" }), getRecord, 1_000).runRate).toBe(0);
++  });
++
++  it("clears a run's samples on settle", () => {
++    const rec = record(100);
++    const getRecord = () => rec;
++    const t = task();
++    workflowRates(t, getRecord, 1_000);
++    rec.lifetimeUsage.output = 300;
++    expect(workflowRates(t, getRecord, 3_000).runRate).toBeCloseTo(100);
++
++    clearWorkflowRates(t.id);
++    rec.lifetimeUsage.output = 900;
++    // A fresh window needs two samples again.
++    expect(workflowRates(t, getRecord, 10_000).runRate).toBe(0);
++  });
++});
+diff --git a/test/workflow-render.test.ts b/test/workflow-render.test.ts
+index fd2edcc..4de66c8 100644
+--- a/test/workflow-render.test.ts
++++ b/test/workflow-render.test.ts
+@@ -256,6 +256,11 @@ describe("stat segments", () => {
+     expect(agentStatSegments(agentEntry({ index: 0, toolCalls: 1 }))).toEqual(["1 tool call"]);
+   });
+ 
++  it("appends the live rate after the token segment", () => {
++    expect(agentStatSegments(agentEntry({ index: 0, tokens: 1_000 }), 42)).toEqual(["1.0k", "42 tok/s"]);
++    expect(agentStatSegments(agentEntry({ index: 0 }), 42)).toEqual(["42 tok/s"]);
++  });
++
+   it("merges the fallback model into the model segment", () => {
+     expect(agentStatSegments(agentEntry({ index: 0, model: "haiku", fallbackModel: "sonnet" }))).toEqual([
+       "haiku→sonnet",
+@@ -487,4 +492,14 @@ describe("component rendering", () => {
+     expect(rendered[0]).toContain("<dim>1/1 agent · 42s · done</dim>");
+     expect(rendered.join("\n")).toContain("<success>✔</success>");
+   });
++
++  it("renders the run and per-agent token rates when supplied", () => {
++    const progress: WorkflowEntry[] = [agentEntry({ index: 0, label: "review:bugs", state: "progress", startedAt: START })];
++    const lines = card({
++      progress,
++      rates: { agentRate: () => 42, runRate: 150 },
++    });
++    expect(lines[0]).toContain("150 tok/s");
++    expect(lines.join("\n")).toContain("42 tok/s");
++  });
+ });

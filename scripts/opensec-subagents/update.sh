@@ -153,7 +153,11 @@ step "patch tests"
   test/agent-widget.test.ts \
   test/agent-widget-rows.test.ts \
   test/agent-widget-redraw.test.ts \
-  test/agent-widget-idle.test.ts 2>&1 | tail -4)
+  test/agent-widget-idle.test.ts \
+  test/workflow-rates.test.ts \
+  test/workflow-progress.test.ts \
+  test/workflow-render.test.ts \
+  test/workflow-dialog.test.ts 2>&1 | tail -4)
 
 # ---- assemble the loadable package -------------------------------------------
 STAGE="$TMP/out"
@@ -174,7 +178,7 @@ const pkg = {
   private: true,
   type: "module",
   description:
-    "OpenSec subagents for pi, built from vendored source with the TPS patch: per-agent and aggregate output tok/s.",
+    "OpenSec subagents for pi, built from vendored source with the TPS patch: per-agent and aggregate output tok/s for agents and workflows.",
   license: upstream.license,
   repository: upstream.repository,
   homepage: upstream.homepage,
@@ -202,7 +206,8 @@ Do not edit it by hand.
 
 - Source: `vendor/opensec-pi-subagents/` (pristine upstream snapshot)
 - Change: `patches/opensec-pi-subagents/0001-tps.patch`
-  (per-agent + aggregate output tokens/second in the Agents widget)
+  (per-agent + aggregate output tokens/second in the Agents widget and the
+  workflow card/inspector)
 - Output: `dist-bun/index.js` — one ESM bundle; `croner`/`nanoid` embedded,
   pi host modules external, so no runtime `node_modules` is needed.
 - Skills: `skills/workflow-authoring/` and `skills/workflow-patterns/`, copied from

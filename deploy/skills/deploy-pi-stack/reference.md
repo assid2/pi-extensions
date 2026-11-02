@@ -7,7 +7,7 @@ repository. It declares:
 
 | Package | Ref | What it provides |
 |---|---|---|
-| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | newest release tag (floating; entry is unversioned) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `opensec-pi-subagents` (vendored build with the TPS patch: per-agent + aggregate output tok/s, subagents and the `SubagentWorkflow` tool), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
+| this repository (`ssh://git@ssh.github.com:443/assid2/pi-extensions.git`) | newest release tag (floating; entry is unversioned) | `pi-usage` (provider quota/balance/spend, per-agent token usage), `opensec-pi-subagents` (vendored build with the TPS patch: per-agent + aggregate output tok/s for agents and workflows, plus the `SubagentWorkflow` tool), `pi-ollama-cloud` (patched fork of `pi-ollama-cloud`: prefix-aware Ollama Cloud namespace so the status bar, `/ollama-cloud-usage`, and web tools follow any `ollama-*` provider), and `pi-commandcode-cloud` (Command Code model provider with `/login`, helper commands, and a `pi-usage` adapter) |
 | `npm:@monotykamary/pi-tps` | latest (unpinned) | tokens/second display |
 | `npm:pi-atelier` | latest (unpinned) | footer/status-rail + sidebar host; the single owner of pi's one custom footer and editor slot |
 | `git:github.com/obra/superpowers` | latest (unpinned) | superpowers skill suite |
@@ -44,7 +44,7 @@ npm package, installed as-is (never forked); only its relay footer glyph is post
 ### The vendored TPS build
 
 `opensec-pi-subagents` is not taken from npm. The npm artifact is a prebuilt Bun bundle with no
-source, and the TPS change (per-agent + aggregate output tokens/second in the Agents widget) has
+source, and the TPS change (per-agent + aggregate output tokens/second in the Agents widget, workflow card and inspector) has
 to live in source. The repository therefore carries:
 
 | Path | Role |

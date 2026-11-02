@@ -21,7 +21,7 @@ likewise unpinned and always float to their latest release**.
 | Path | What it is |
 |---|---|
 | [`pi-usage/`](pi-usage/) | `@assid2/pi-usage` — per-account provider quota/balance/spend (footer + `/usage` dialog) and per-agent token usage (TypeScript source, loaded directly) |
-| [`opensec-pi-subagents/`](opensec-pi-subagents/) | **Generated** build of `opensec-git/opensec-pi-subagents` with the TPS patch: one ESM bundle with per-agent + aggregate output tok/s, plus its workflow tool. `croner`/`nanoid` are embedded, so no runtime `node_modules` — do not edit by hand |
+| [`opensec-pi-subagents/`](opensec-pi-subagents/) | **Generated** build of `opensec-git/opensec-pi-subagents` with the TPS patch: one ESM bundle with per-agent + aggregate output tok/s in the Agents widget and the workflow card/inspector, plus its workflow tool. `croner`/`nanoid` are embedded, so no runtime `node_modules` — do not edit by hand |
 | [`vendor/opensec-pi-subagents/`](vendor/opensec-pi-subagents/) | Pristine upstream source snapshot for the build above (commit pinned in `UPSTREAM`) |
 | [`patches/opensec-pi-subagents/`](patches/opensec-pi-subagents/) | `0001-tps.patch` — the durable TPS change, reapplied on every upstream update |
 | [`scripts/opensec-subagents/`](scripts/opensec-subagents/) | `update.sh` — sync upstream, apply the patch, compile and bundle, verify |

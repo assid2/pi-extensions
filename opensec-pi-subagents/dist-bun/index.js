@@ -5526,6 +5526,8 @@ var init_agent_manager = __esm(() => {
 // dist/token-rate.js
 function pushSample(samples, now, total) {
   const last = samples[samples.length - 1];
+  if (last && total < last.total)
+    samples.length = 0;
   if (last && last.ts === now && last.total === total)
     return;
   samples.push({ ts: now, total });
@@ -10140,6 +10142,7 @@ var GERUND_OVERRIDES = new Map([
 
 // dist/ui/workflow-card.js
 init_terminal_text();
+var WORKFLOW_TICK_MS = 1000;
 var LABEL_COLUMN_MAX = 28;
 var DEFAULT_WIDTH = 80;
 var UNICODE_GLYPHS = {
@@ -10192,7 +10195,7 @@ function formatThinking(entry) {
   return requestedThinking !== undefined && requestedThinking !== thinking ? `thinking: ${thinking} (asked ${requestedThinking})` : `thinking: ${thinking}`;
 }
 var REPLAYED_ANNOTATION = "from resume journal";
-function agentStatSegments(entry) {
+function agentStatSegments(entry, rate = 0) {
   const parts = [];
   if (entry.agentType)
     parts.push(entry.agentType);
@@ -10201,6 +10204,8 @@ function agentStatSegments(entry) {
     parts.push(model);
   if (entry.tokens)
     parts.push(formatCompactTokens(entry.tokens));
+  if (rate > 0)
+    parts.push(`${Math.round(rate)} tok/s`);
   if (entry.toolCalls)
     parts.push(`${entry.toolCalls} tool call${entry.toolCalls === 1 ? "" : "s"}`);
   if (entry.durationMs)
@@ -10244,6 +10249,8 @@ function layoutWorkflowCard(input) {
   const { agents: agents2, logs } = collapse(input.progress);
   const totals = stats(input.progress, input.agentCount ?? 0);
   const head = header(input.task, input.meta, groups, input.agentCount ?? 0, now);
+  const runRate = input.rates?.runRate ?? 0;
+  const headStats = runRate > 0 ? `${head.stats} · ${Math.round(runRate)} tok/s` : head.stats;
   const lines = [];
   const left = input.showToolTitle ? [
     { text: `${glyphs.pointer} `, color: "toolTitle" },
@@ -10251,10 +10258,10 @@ function layoutWorkflowCard(input) {
     { text: "  " },
     { text: head.name, color: "muted" }
   ] : [{ text: "  " }, { text: head.name, color: "toolTitle", bold: true }];
-  const statsWidth = visibleWidth4(head.stats);
+  const statsWidth = visibleWidth4(headStats);
   const clampedLeft = clampLine(left, Math.max(0, width - statsWidth - 1));
   const gap = Math.max(1, width - lineWidth(clampedLeft) - statsWidth);
-  lines.push([...clampedLeft, { text: " ".repeat(gap) }, { text: head.stats, color: "dim" }]);
+  lines.push([...clampedLeft, { text: " ".repeat(gap) }, { text: headStats, color: "dim" }]);
   if (head.subtext)
     lines.push(clampLine([{ text: `  ${head.subtext}`, color: "dim" }], width));
   const labelColumn = Math.min(LABEL_COLUMN_MAX, Math.max(0, ...groups.flatMap((group) => group.agents.map((a) => visibleWidth4(a.label)))));
@@ -10278,7 +10285,7 @@ function layoutWorkflowCard(input) {
         rowGlyph(entry, glyphs),
         { text: " " }
       ];
-      const statParts = entry.cached ? [REPLAYED_ANNOTATION, ...agentStatSegments(entry)] : agentStatSegments(entry);
+      const statParts = entry.cached ? [REPLAYED_ANNOTATION, ...agentStatSegments(entry, input.rates?.agentRate(entry.index) ?? 0)] : agentStatSegments(entry, input.rates?.agentRate(entry.index) ?? 0);
       const pad = Math.max(0, labelColumn - visibleWidth4(entry.label));
       segments.push({ text: statParts.length > 0 ? entry.label + " ".repeat(pad) : entry.label });
       for (const part of statParts) {
@@ -10338,6 +10345,43 @@ function renderWorkflowEntryCard(data, theme) {
     totalTokens: data.totalTokens,
     showToolTitle: true
   }, theme);
+}
+
+// dist/workflow/rates.js
+init_token_rate();
+var runKey = (taskId) => `workflow:${taskId}`;
+var agentPrefix = (taskId) => `workflow:${taskId}:`;
+var agentKey = (taskId, index) => `${agentPrefix(taskId)}${index}`;
+var ZERO = { agentRate: () => 0, runRate: 0 };
+function workflowRates(task, getRecord, now = Date.now()) {
+  if (task.status !== "running")
+    return ZERO;
+  const running = collapse(task.workflowProgress).agents.filter((entry) => displayState(entry, true) === "running");
+  if (running.length === 0) {
+    clearTokenRate(runKey(task.id));
+    clearTokenRates(agentPrefix(task.id));
+    return ZERO;
+  }
+  let total = 0;
+  for (const entry of running) {
+    if (entry.recordId === undefined)
+      continue;
+    const record = getRecord(entry.recordId);
+    if (record === undefined || record.status !== "running")
+      continue;
+    const output = record.lifetimeUsage.output;
+    total += output;
+    sampleTokenRate(agentKey(task.id, entry.index), output, now);
+  }
+  sampleTokenRate(runKey(task.id), total, now);
+  return {
+    agentRate: (index) => tokenRate(agentKey(task.id, index)),
+    runRate: tokenRate(runKey(task.id))
+  };
+}
+function clearWorkflowRates(taskId) {
+  clearTokenRate(runKey(taskId));
+  clearTokenRates(agentPrefix(taskId));
 }
 
 // dist/workflow/task.js
@@ -10800,14 +10844,19 @@ function agentRow(options) {
   const model = formatModel(entry);
   if (model)
     head.push({ text: ` ${model}`, color: "dim" });
-  for (const part of [...subStatusAnnotations(entry, display, options.now), ...rowStatSegments(entry)]) {
+  for (const part of [...subStatusAnnotations(entry, display, options.now), ...rowStatSegments(entry, options.rates?.agentRate(entry.index) ?? 0)]) {
     head.push({ text: " · ", color: "dim" }, { text: part, color: "dim" });
   }
   const duration = entry.durationMs ? [{ text: `${formatDuration3(entry.durationMs)} `, color: "dim" }] : [];
   return duration.length > 0 ? rightAlign2(head, duration, width) : clampLine(head, width);
 }
-function rowStatSegments(entry) {
-  return entry.tokens ? [`${formatCompactTokens(entry.tokens)} tok`] : [];
+function rowStatSegments(entry, rate = 0) {
+  const parts = [];
+  if (entry.tokens)
+    parts.push(`${formatCompactTokens(entry.tokens)} tok`);
+  if (rate > 0)
+    parts.push(`${Math.round(rate)} tok/s`);
+  return parts;
 }
 function layoutWorkflowDialog(input) {
   const glyphs = input.ascii ? ASCII_DIALOG_GLYPHS : UNICODE_DIALOG_GLYPHS;
@@ -10819,8 +10868,10 @@ function layoutWorkflowDialog(input) {
   const spinnerFrame = input.spinnerFrame ?? 0;
   const lines = [];
   const head = header(input.task, input.meta, view.groups, input.agentCount ?? 0, now);
+  const runRate = input.rates?.runRate ?? 0;
+  const headStats = runRate > 0 ? `${head.stats} · ${Math.round(runRate)} tok/s` : head.stats;
   lines.push(clampLine([{ text: " " }, { text: head.name, color: "toolTitle", bold: true }], width));
-  lines.push(rightAlign2(head.subtext ? [{ text: " " }, { text: head.subtext, color: "dim" }] : [], [{ text: head.stats, color: "dim" }], width));
+  lines.push(rightAlign2(head.subtext ? [{ text: " " }, { text: head.subtext, color: "dim" }] : [], [{ text: headStats, color: "dim" }], width));
   lines.push([]);
   const frameWidth = width - 1;
   const leftWidth = leftPaneWidth(frameWidth);
@@ -10859,7 +10910,8 @@ function layoutWorkflowDialog(input) {
         glyphs,
         workflowActive: view.workflowActive,
         spinnerFrame,
-        now
+        now,
+        rates: input.rates
       }));
     }
   }
@@ -11119,7 +11171,8 @@ async function showWorkflowDialog(ctx, task, deps) {
       totalPausedMs: task.totalPausedMs
     },
     meta: task.meta,
-    agentCount: task.agentCount
+    agentCount: task.agentCount,
+    rates: workflowRates(task, deps.getRecord)
   }), theme, done, {
     onKill: () => {
       if (task.abortController.signal.aborted)
@@ -15874,8 +15927,10 @@ ${BACKGROUND_FOLLOW_UP}
         }
       });
       completeWorkflowTask(task, result);
+      clearWorkflowRates(task.id);
     } catch (err) {
       failWorkflowTask(task, err instanceof Error ? err.message : String(err));
+      clearWorkflowRates(task.id);
     }
   }
   function notifyWorkflowFinished(task) {
@@ -15940,6 +15995,23 @@ ${BACKGROUND_FOLLOW_UP}
       const task = taskId !== undefined ? workflowTasks.get(taskId) : undefined;
       if (renderContext.isError || !task)
         return new Text2(text, 0, 0);
+      const tickState = renderContext.state ?? {};
+      if (renderContext.state === undefined)
+        renderContext.state = tickState;
+      if (task.status === "running") {
+        if (tickState.workflowTick === undefined) {
+          tickState.workflowTick = setTimeout(() => {
+            tickState.workflowTick = undefined;
+            try {
+              renderContext.invalidate();
+            } catch {}
+          }, WORKFLOW_TICK_MS);
+          tickState.workflowTick.unref?.();
+        }
+      } else if (tickState.workflowTick !== undefined) {
+        clearTimeout(tickState.workflowTick);
+        tickState.workflowTick = undefined;
+      }
       return renderWorkflowCard({
         progress: task.workflowProgress,
         task: {
@@ -15951,7 +16023,8 @@ ${BACKGROUND_FOLLOW_UP}
         },
         meta: task.meta,
         agentCount: task.agentCount,
-        totalTokens: task.totalTokens
+        totalTokens: task.totalTokens,
+        rates: workflowRates(task, (id) => manager.getRecord(id))
       }, theme);
     },
     execute: async (toolCallId, params, _signal, _onUpdate, ctx) => {

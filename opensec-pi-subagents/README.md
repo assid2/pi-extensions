@@ -5,7 +5,8 @@ Do not edit it by hand.
 
 - Source: `vendor/opensec-pi-subagents/` (pristine upstream snapshot)
 - Change: `patches/opensec-pi-subagents/0001-tps.patch`
-  (per-agent + aggregate output tokens/second in the Agents widget)
+  (per-agent + aggregate output tokens/second in the Agents widget and the
+  workflow card/inspector)
 - Output: `dist-bun/index.js` — one ESM bundle; `croner`/`nanoid` embedded,
   pi host modules external, so no runtime `node_modules` is needed.
 - Skills: `skills/workflow-authoring/` and `skills/workflow-patterns/`, copied from

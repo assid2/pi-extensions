@@ -51,12 +51,19 @@ Keep the patch header's base commit current when you regenerate it.
 
 - `src/token-rate.ts` — rolling 10 s sampler over cumulative **output** tokens.
   Input and cache-read tokens are excluded: they step at API-call boundaries and
-  produce implausible spikes.
-- `src/ui/agent-widget.ts` — samples every running agent on each widget frame,
-  shows `N tok/s` beside its token count, and puts the aggregate on the
+  produce implausible spikes. A counter reset (a retried workflow child starts a
+  fresh record) begins a new window instead of reading as a stall.
+- `src/ui/agent-widget.ts` — samples every running top-level agent on each widget
+  frame, shows `N tok/s` beside its token count, and puts the aggregate on the
   `Agents` heading.
-- `test/token-rate.test.ts` — sampler unit tests.
-- `test/agent-widget-tps.test.ts` — widget-level per-agent + aggregate rates.
+- `src/workflow/rates.ts` — joins each running workflow entry to its
+  `AgentRecord` through `recordId` and samples `lifetimeUsage.output`. The
+  workflow progress log itself only carries totals once an agent settles.
+- `src/ui/workflow-card.ts`, `src/ui/workflow-dialog.ts` — aggregate `tok/s` on
+  the run header and per-task `tok/s` on agent rows; `src/index.ts` and
+  `src/ui/workflow-menu.ts` feed the rates (and the card drives a 1 s redraw so a
+  background run keeps ticking while the parent is idle).
+- Tests: sampler, Agents widget, workflow rates, card and dialog.
 
 The same algorithm was previously carried by the `pi-dynamic-workflows` fork
 (`src/token-rate.ts`), which this patch replaces.

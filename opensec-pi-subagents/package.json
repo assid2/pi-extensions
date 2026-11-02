@@ -3,7 +3,7 @@
   "version": "0.20.9",
   "private": true,
   "type": "module",
-  "description": "OpenSec subagents for pi, built from vendored source with the TPS patch: per-agent and aggregate output tok/s.",
+  "description": "OpenSec subagents for pi, built from vendored source with the TPS patch: per-agent and aggregate output tok/s for agents and workflows.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
