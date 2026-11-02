@@ -48,6 +48,10 @@ export function renderFooterStatus(input: FooterInput): string | undefined {
   if (usage.stale) parts.push(fg("warning", "stale"));
   if (usage.warning) parts.push(fg("warning", "⚠"));
 
+  // A provider with no quota lanes (e.g. ollama's request-count feed) still has
+  // something to say; show it rather than falling back to a bare account name.
+  if (parts.length === 0 && usage.notice) parts.push(fg("muted", usage.notice.slice(0, 48)));
+
   if (parts.length === 0) {
     return liveAgents > 0 ? fg("dim", `${label} · ⧉${liveAgents}`) : undefined;
   }

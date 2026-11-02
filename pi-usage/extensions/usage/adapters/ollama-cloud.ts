@@ -2,16 +2,18 @@
  * Ollama Cloud usage adapter.
  *
  * Endpoint (undocumented, per pi-ollama-cloud source): GET https://ollama.com/api/usage
- * with `Authorization: Bearer <OLLAMA key>`. Response:
- *   {
- *     "limits": {
- *       "session": { "usage": 0.42, "models": [{ "name": "...", "request_count": 3 }] },
- *       "weekly":  { "usage": 0.61, "models": [...] }
- *     },
- *     "activity": { "cost": "$12.34" }   // 4-week spend string, optional
- *   }
- * Note: the fractions are REQUEST-count fractions of plan caps (Ollama Cloud
- * is subscription-billed), not token fractions.
+ * with `Authorization: Bearer <OLLAMA key>`. The shape is unstable and has
+ * flipped repeatedly:
+ *   { "limits": { "session": { "usage": 0.42 }, "weekly": { "usage": 0.61 } },
+ *     "activity": { "cost": "$12.34" } }          // classic: plan-cap fractions
+ *   { "limits": { "monthly": { "usage": 0.10 } } }   // 2026-09-03 monthly-only
+ *   { "range": "7d", "totals": { "request_count": 6364 }, "buckets": [...] }
+ *                                                     // 2026-10: activity feed only
+ * The fractions were REQUEST-count fractions of plan caps (Ollama Cloud is
+ * subscription-billed), not token fractions. As of 2026-10 the plan-cap
+ * fractions are no longer served anywhere we can reach (POST /api/me returns
+ * only a plan name), so the activity feed degrades to a notice rather than an
+ * "unrecognized shape" error; the older shapes still parse if they return.
  */
 import { requestJson } from "./http.ts";
 import type { AdapterAttempt, AdapterContext, UsageAdapter } from "./types.ts";
@@ -40,13 +42,21 @@ function parseDollar(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function readCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value) : null;
+}
+
 export function parseOllamaCloudUsage(payload: unknown): ProviderUsage | null {
   const root = asObject(payload);
-  const limits = asObject(root?.limits) ?? root; // tolerate a bare limits object
-  if (!limits) return null;
+  if (!root) return null;
+  const limits = asObject(root.limits) ?? root; // tolerate a bare limits object
 
   const lanes: UsageLane[] = [];
-  for (const [key, label] of [["session", "5h"], ["weekly", "Weekly"]] as const) {
+  for (const [key, label] of [
+    ["session", "5h"],
+    ["weekly", "Weekly"],
+    ["monthly", "Monthly"],
+  ] as const) {
     const window = asObject(limits[key]);
     if (!window) continue;
     const percent = readFraction(window.usage);
@@ -55,9 +65,19 @@ export function parseOllamaCloudUsage(payload: unknown): ProviderUsage | null {
   }
 
   let notice: string | undefined;
-  const activity = asObject(root?.activity) ?? root ?? {};
+  const activity = asObject(root.activity) ?? root;
   const cost = parseDollar(activity.cost ?? activity.spend ?? activity.total_cost);
   if (cost !== null) notice = `4-week spend $${cost.toFixed(2)}`;
+
+  // With the plan-cap fractions gone, the request-count feed is what is left:
+  // surface the window total instead of reporting a shape error.
+  if (lanes.length === 0 && notice === undefined) {
+    const count = readCount(asObject(root.totals)?.request_count);
+    if (count !== null) {
+      const range = typeof root.range === "string" && root.range.trim() ? root.range.trim() : "recent";
+      notice = `${range} · ${count} requests`;
+    }
+  }
 
   if (lanes.length === 0 && notice === undefined) return null;
   return { lanes: lanes.length > 0 ? lanes : undefined, notice };

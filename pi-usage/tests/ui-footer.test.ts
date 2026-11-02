@@ -38,6 +38,17 @@ test("footer: no usage, no agents -> undefined", () => {
   assert.equal(line, undefined);
 });
 
+test("footer: a notice-only provider shows the notice instead of a bare account name", () => {
+  const line = renderFooterStatus({
+    account: { id: "ollama-cloud", name: "Ollama Cloud", base: "ollama-cloud", isAlias: false },
+    usage: { notice: "7d · 6364 requests" },
+    liveAgents: 0,
+    fg: noop,
+    nowMs: Date.now(),
+  });
+  assert.ok(line?.includes("7d · 6364 requests"));
+});
+
 test("footer: error usage shows warning line", () => {
   const line = renderFooterStatus({
     account: { id: "ollama-cloud", name: "Ollama Cloud", base: "ollama-cloud", isAlias: false },
